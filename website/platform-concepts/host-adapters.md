@@ -44,32 +44,9 @@ The adapter abstracts these differences so plugins only deal with one consistent
 
 | Host | Adapter Location | Integration Style |
 | :-- | :-- | :-- |
-| OpenClaw | `components/adapters/openclaw/` | Native plugin slot + restart |
-| Codex | `components/adapters/codex/` | Local proxy + hooks |
-| Claude Code | `components/adapters/claude-code/` | Local gateway + MCP |
-
-## Integration Patterns
-
-### Native Plugin Slot (OpenClaw)
-
-The host itself provides a plugin mechanism. The adapter registers as a plugin and receives events directly.
-
-### Proxy/Gateway (Codex, Claude Code)
-
-When the host doesn't have native plugin support, the adapter runs as a **local proxy** that sits between the host and the model API. It intercepts requests, applies plugin transformations, and forwards the modified context.
-
-The proxy pattern enables:
-- Full context visibility without host modifications
-- Consistent behavior across hosts with different internals
-- Graceful degradation if the proxy is stopped
-
-## Adapter Lifecycle
-
-1. **Install**: Write config files, register hooks, set up proxy autostart
-2. **Start**: Proxy/gateway starts, hooks activate
-3. **Run**: Events flow through adapter → core → plugins → adapter → host
-4. **Stop**: Gateway shuts down, hooks deactivate
-5. **Uninstall**: Config files restored from `.tokenpilot.bak` backups
+| OpenClaw | `components/tokenpilot/adapters/openclaw/` | Native plugin slot + restart |
+| Codex | `components/tokenpilot/adapters/codex/` | Local proxy + hooks |
+| Claude Code | `components/tokenpilot/adapters/claude-code/` | Local gateway + MCP |
 
 ## Next
 

@@ -22,8 +22,11 @@ test("session-state persists snapshots and recent turn bindings per session", as
   const stateDir = await mkdtemp(join(tmpdir(), "lightmem2-codex-session-state-"));
   try {
     await upsertCodexSessionSnapshot(stateDir, "session-a", {
+      codexSessionId: "019f-session-a",
       workspaceHint: "/tmp/workspace-a",
+      transcriptPath: "/tmp/rollout-session-a.jsonl",
       latestModel: "gpt-5.4-mini",
+      latestUpstreamProvider: "OpenAI",
       lastHookEvent: "PostToolUse",
       lastToolName: "read",
       lastToolInputChars: 32,
@@ -59,7 +62,10 @@ test("session-state persists snapshots and recent turn bindings per session", as
     const bindings = await loadCodexRecentTurnBindings(stateDir, "session-a", 8);
     const latestSessionId = await resolveLatestCodexSessionId(stateDir);
 
+    assert.equal(snapshot?.codexSessionId, "019f-session-a");
     assert.equal(snapshot?.workspaceHint, "/tmp/workspace-a");
+    assert.equal(snapshot?.transcriptPath, "/tmp/rollout-session-a.jsonl");
+    assert.equal(snapshot?.latestUpstreamProvider, "OpenAI");
     assert.equal(snapshot?.lastToolName, "read");
     assert.equal(bindings.length, 2);
     assert.equal(bindings[0]?.responseId, "resp-3");
@@ -117,8 +123,11 @@ test("session-state can merge hook snapshot metadata into the synthesized proxy 
   const stateDir = await mkdtemp(join(tmpdir(), "lightmem2-codex-session-merge-"));
   try {
     await upsertCodexSessionSnapshot(stateDir, "019f-hook-session", {
+      codexSessionId: "019f-hook-session",
       workspaceHint: "/tmp/hook-workspace",
+      transcriptPath: "/tmp/hook-rollout.jsonl",
       latestModel: "gpt-5.4-mini",
+      latestUpstreamProvider: "OpenAI",
       lastHookEvent: "PostToolUse",
       lastToolName: "read",
       lastToolInputChars: 64,
@@ -133,7 +142,10 @@ test("session-state can merge hook snapshot metadata into the synthesized proxy 
 
     const merged = await mergeCodexSessionSnapshot(stateDir, "019f-hook-session", "codex-synth-1");
 
+    assert.equal(merged?.codexSessionId, "019f-hook-session");
     assert.equal(merged?.workspaceHint, "/tmp/hook-workspace");
+    assert.equal(merged?.transcriptPath, "/tmp/hook-rollout.jsonl");
+    assert.equal(merged?.latestUpstreamProvider, "OpenAI");
     assert.equal(merged?.lastHookEvent, "PostToolUse");
     assert.equal(merged?.lastToolName, "read");
     assert.equal(merged?.latestResponseId, "resp-1");

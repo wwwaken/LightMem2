@@ -1,3 +1,5 @@
+import type { ModelContextRewriteMode } from "../context-rewrite/contracts.js";
+
 export type HostAdapterCapabilities = {
   supportsStreaming: boolean;
   supportsToolCalls: boolean;
@@ -9,6 +11,9 @@ export type HostAdapterCapabilities = {
   supportsToolArgumentRewrite: boolean;
   supportsTranscriptRead: boolean;
   supportsTranscriptRewrite: boolean;
+  modelContextRewriteMode: ModelContextRewriteMode;
+  supportsPersistentRewritePlans: boolean;
+  supportsRewriteRollback: boolean;
   supportsCommandRegistration: boolean;
   supportsNativeVisualization: boolean;
   supportsStableSessionIdentity: boolean;
@@ -26,6 +31,9 @@ export const MINIMAL_HOST_CAPABILITIES: HostAdapterCapabilities = {
   supportsToolArgumentRewrite: false,
   supportsTranscriptRead: false,
   supportsTranscriptRewrite: false,
+  modelContextRewriteMode: "none",
+  supportsPersistentRewritePlans: false,
+  supportsRewriteRollback: false,
   supportsCommandRegistration: false,
   supportsNativeVisualization: false,
   supportsStableSessionIdentity: false,
@@ -58,8 +66,11 @@ export function canSupportReductionCore(
 export function canSupportLifecycleEvictionEquivalently(
   capabilities: HostAdapterCapabilities,
 ): boolean {
-  return capabilities.supportsTranscriptRead
-    && capabilities.supportsTranscriptRewrite;
+  return (capabilities.supportsTranscriptRead
+      && capabilities.supportsTranscriptRewrite)
+    || (capabilities.modelContextRewriteMode !== "none"
+      && capabilities.supportsPersistentRewritePlans
+      && capabilities.supportsRewriteRollback);
 }
 
 export function canSupportToolCallMemo(

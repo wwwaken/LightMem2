@@ -1,0 +1,36 @@
+{
+  "schema": "lightmem2.context-rewrite-golden/v1",
+  "id": "unresolved-task",
+  "description": "An unresolved task and all of its items must remain available.",
+  "tasks": [
+    {
+      "id": "task-unresolved-001",
+      "status": "unresolved",
+      "items": [
+        {
+          "id": "item-unresolved-user-001",
+          "kind": "message",
+          "role": "user",
+          "content": "KEEP_ME_33333333-3333-4333-8333-333333333333"
+        },
+        {
+          "id": "item-unresolved-assistant-001",
+          "kind": "message",
+          "role": "assistant",
+          "content": "The operation has started but is not complete."
+        }
+      ]
+    }
+  ],
+  "expected": {
+    "evict_task_ids": [],
+    "keep_task_ids": [
+      "task-unresolved-001"
+    ],
+    "evict_item_ids": [],
+    "keep_item_ids": [
+      "item-unresolved-user-001",
+      "item-unresolved-assistant-001"
+    ]
+  }
+}

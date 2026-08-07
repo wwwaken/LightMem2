@@ -1,0 +1,55 @@
+{
+  "schema": "lightmem2.context-rewrite-golden/v1",
+  "id": "active-turn",
+  "description": "The current user turn must remain available even when an older completed task is evicted.",
+  "tasks": [
+    {
+      "id": "task-old-completed-001",
+      "status": "completed",
+      "current": false,
+      "items": [
+        {
+          "id": "item-old-user-001",
+          "kind": "message",
+          "role": "user",
+          "content": "EVICT_ME_66666666-6666-4666-8666-666666666666"
+        },
+        {
+          "id": "item-old-assistant-001",
+          "kind": "message",
+          "role": "assistant",
+          "content": "The older operation has been completed."
+        }
+      ]
+    },
+    {
+      "id": "task-current-001",
+      "status": "active",
+      "current": true,
+      "items": [
+        {
+          "id": "item-current-user-001",
+          "kind": "message",
+          "role": "user",
+          "content": "KEEP_ME_77777777-7777-4777-8777-777777777777"
+        }
+      ]
+    }
+  ],
+  "expected": {
+    "evict_task_ids": [
+      "task-old-completed-001"
+    ],
+    "keep_task_ids": [
+      "task-current-001"
+    ],
+    "evict_item_ids": [
+      "item-old-user-001",
+      "item-old-assistant-001"
+    ],
+    "keep_item_ids": [
+      "item-current-user-001"
+    ],
+    "current_task_id": "task-current-001"
+  }
+}

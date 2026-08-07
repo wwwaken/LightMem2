@@ -22,6 +22,7 @@ export type ClaudeCodeSessionSnapshot = {
   responseChars?: number;
   assistantChars?: number;
   reductionSavedChars?: number;
+  evictionSavedChars?: number;
   updatedAt: string;
 };
 
@@ -34,6 +35,7 @@ export type ClaudeCodeRecentTurnBinding = {
   responseChars?: number;
   assistantChars?: number;
   reductionSavedChars?: number;
+  evictionSavedChars?: number;
   stablePrefixApplied?: boolean;
   reductionApplied?: boolean;
   stream?: boolean;
@@ -73,6 +75,7 @@ export async function upsertClaudeCodeSessionSnapshot(
     responseChars: patch.responseChars ?? current?.responseChars,
     assistantChars: patch.assistantChars ?? current?.assistantChars,
     reductionSavedChars: patch.reductionSavedChars ?? current?.reductionSavedChars,
+    evictionSavedChars: patch.evictionSavedChars ?? current?.evictionSavedChars,
     updatedAt,
   };
   await writeSessionSnapshot(stateDir, sessionId, next);

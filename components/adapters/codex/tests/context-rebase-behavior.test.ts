@@ -5,6 +5,7 @@ import {
   applyCodexContextRewrite,
   buildCodexRebaseRequest,
   executeCodexRebaseWithFallback,
+  withCodexRebaseReplayAccountingInput,
   type CodexEffectiveHistory,
   type JsonObject,
 } from "../src/context-rewrite/index.js";
@@ -50,6 +51,14 @@ function textFromResponsesInput(input: unknown): string {
 
 function occurrences(text: string, needle: string): number {
   return text.split(needle).length - 1;
+}
+
+function jsonChars(value: unknown): number {
+  return JSON.stringify(value).length;
+}
+
+function estimatedTokens(chars: number): number {
+  return Math.ceil(chars / 4);
 }
 
 function baseResponsesPayload(): ResponsesPayload {
@@ -168,6 +177,67 @@ test("CDR-01 rejects stale revisions before constructing a rebase request", () =
   }), /revision_mismatch/);
 });
 
+test("CDR-02 builds rebase accounting for replay cost and break-even", () => {
+  const originalPayload = baseResponsesPayload();
+  const history = effectiveHistoryFixture();
+  const result = buildCodexRebaseRequest({
+    sessionId: "codex-session-1",
+    planId: "plan-accounting",
+    baseRevision: history.revision,
+    originalPayload,
+    effectiveHistory: history,
+    currentInput: originalPayload.input,
+    mutationPlan: {
+      operations: [{ type: "evict", stableItemId: "evicted-user-1" }],
+    },
+  });
+  const evictedItem = history.replayableItems.find((entry) => entry.stableItemId === "evicted-user-1");
+  assert.ok(evictedItem);
+  const evictedChars = jsonChars(evictedItem.item);
+  const rebaseReplayChars = jsonChars(result.payload.input);
+
+  assert.equal(result.accounting.plannedSavedChars, evictedChars);
+  assert.equal(result.accounting.plannedSavedTokens, estimatedTokens(evictedChars));
+  assert.equal(result.accounting.actuallyRemovedChars, evictedChars);
+  assert.equal(result.accounting.actuallyRemovedTokens, estimatedTokens(evictedChars));
+  assert.equal(result.accounting.rebaseReplayCostChars, rebaseReplayChars);
+  assert.equal(result.accounting.rebaseReplayCostTokens, estimatedTokens(rebaseReplayChars));
+  assert.equal(result.accounting.subsequentSavedCharsPerTurn, evictedChars);
+  assert.equal(result.accounting.subsequentSavedTokensPerTurn, estimatedTokens(evictedChars));
+  assert.equal(result.accounting.estimatorCostChars, 0);
+  assert.equal(result.accounting.estimatorCostTokens, 0);
+  assert.equal(result.accounting.fallbackExtraRequestCount, 0);
+  assert.equal(result.accounting.cacheColdMissCount, 1);
+  assert.equal(result.accounting.breakEvenTurn, Math.ceil(rebaseReplayChars / evictedChars));
+});
+
+test("CDR-02 refreshes replay accounting after downstream input changes", () => {
+  const originalPayload = baseResponsesPayload();
+  const history = effectiveHistoryFixture();
+  const result = buildCodexRebaseRequest({
+    sessionId: "codex-session-1",
+    planId: "plan-accounting-refresh",
+    baseRevision: history.revision,
+    originalPayload,
+    effectiveHistory: history,
+    currentInput: originalPayload.input,
+    mutationPlan: {
+      operations: [{ type: "evict", stableItemId: "evicted-user-1" }],
+    },
+  });
+  const reducedInput = [{ role: "user", content: "reduced current input" }];
+  const refreshed = withCodexRebaseReplayAccountingInput(result.accounting, reducedInput);
+
+  assert.equal(refreshed.rebaseReplayCostChars, jsonChars(reducedInput));
+  assert.equal(refreshed.rebaseReplayCostTokens, estimatedTokens(jsonChars(reducedInput)));
+  assert.equal(
+    refreshed.breakEvenTurn,
+    Math.ceil(jsonChars(reducedInput) / result.accounting.subsequentSavedCharsPerTurn),
+  );
+  assert.equal(refreshed.plannedSavedChars, result.accounting.plannedSavedChars);
+  assert.equal(refreshed.actuallyRemovedChars, result.accounting.actuallyRemovedChars);
+});
+
 test("CDR-01 rejects effective history containing deferred provider items", () => {
   const originalPayload = baseResponsesPayload();
   const effectiveHistory = effectiveHistoryFixture();
@@ -219,6 +289,38 @@ test("CDR-01 allows a function call and its output to be evicted together", () =
     },
   });
   assert.doesNotMatch(JSON.stringify(result.payload.input), /call-1/);
+});
+
+test("CDR-01 rejects malformed, duplicate, and protocol-mismatched tool closure", () => {
+  const originalPayload = baseResponsesPayload();
+  const assertUnsafeCurrentInput = (currentInput: JsonObject[], reason: RegExp) => {
+    assert.throws(() => buildCodexRebaseRequest({
+      sessionId: "codex-session-1",
+      planId: "plan-malformed-tool-closure",
+      baseRevision: "history-rev-1",
+      originalPayload: { ...originalPayload, input: currentInput },
+      effectiveHistory: { ...effectiveHistoryFixture(), replayableItems: [] },
+      currentInput,
+      mutationPlan: { operations: [] },
+    }), reason);
+  };
+
+  assertUnsafeCurrentInput([
+    { type: "function_call", name: "run", arguments: "{}" },
+  ], /tool_call_id_missing:function_call/);
+  assertUnsafeCurrentInput([
+    { type: "function_call", call_id: "duplicate", name: "run", arguments: "{}" },
+    { type: "function_call", call_id: "duplicate", name: "run_again", arguments: "{}" },
+    { type: "function_call_output", call_id: "duplicate", output: "done" },
+  ], /tool_call_duplicate:duplicate/);
+  assertUnsafeCurrentInput([
+    { type: "function_call", call_id: "mismatch", name: "run", arguments: "{}" },
+    { type: "custom_tool_call_output", call_id: "mismatch", output: "done" },
+  ], /tool_closure_type_mismatch:mismatch/);
+  assertUnsafeCurrentInput([
+    { type: "function_call_output", call_id: "reversed", output: "done" },
+    { type: "function_call", call_id: "reversed", name: "run", arguments: "{}" },
+  ], /tool_output_before_call:reversed/);
 });
 
 test("CDR-04 retries the original request once when rebase replay is rejected upstream", async () => {
@@ -294,6 +396,38 @@ test("CDR-03 does not commit a 2xx rebase response without a response id", async
   assert.equal(result.cooldown?.reason, "rebase_response_id_missing");
 });
 
+test("CDR-03 does not commit non-terminal non-stream responses", async () => {
+  for (const status of ["queued", "in_progress", "cancelled"]) {
+    const sentPayloads: JsonObject[] = [];
+    const result = await executeCodexRebaseWithFallback({
+      sessionId: "codex-session-1",
+      planId: `plan-${status}`,
+      epochId: `epoch-${status}`,
+      originalPayload: baseResponsesPayload(),
+      rebasedPayload: { input: [] },
+      async sendUpstream(payload) {
+        sentPayloads.push(payload);
+        return sentPayloads.length === 1
+          ? {
+            status: 200,
+            headers: { "content-type": "application/json" },
+            text: JSON.stringify({ id: `resp-${status}`, status }),
+          }
+          : {
+            status: 200,
+            headers: { "content-type": "application/json" },
+            text: JSON.stringify({ id: "resp-original-fallback", status: "completed" }),
+          };
+      },
+    });
+
+    assert.equal(sentPayloads.length, 2);
+    assert.equal(result.outcome, "bypassed");
+    assert.equal(result.newResponseId, undefined);
+    assert.equal(result.cooldown?.reason, `rebase_response_${status}`);
+  }
+});
+
 test("CDR-03 commits a streaming rebase only after observing its response id", async () => {
   const result = await executeCodexRebaseWithFallback({
     sessionId: "codex-session-1",
@@ -309,6 +443,9 @@ test("CDR-03 commits a streaming rebase only after observing its response id", a
           "event: response.created",
           "data: {\"response\":{\"id\":\"resp-rebased-stream\"}}",
           "",
+          "event: response.completed",
+          "data: {\"response\":{\"id\":\"resp-rebased-stream\"}}",
+          "",
           "data: [DONE]",
           "",
         ].join("\n"),
@@ -318,6 +455,47 @@ test("CDR-03 commits a streaming rebase only after observing its response id", a
 
   assert.equal(result.outcome, "committed");
   assert.equal(result.newResponseId, "resp-rebased-stream");
+});
+
+test("CDR-03 does not commit a failed streaming rebase after response.created", async () => {
+  const sentPayloads: JsonObject[] = [];
+  const result = await executeCodexRebaseWithFallback({
+    sessionId: "codex-session-1",
+    planId: "plan-failed-streaming-response",
+    epochId: "epoch-1",
+    originalPayload: baseResponsesPayload(),
+    rebasedPayload: { input: [] },
+    async sendUpstream(payload) {
+      sentPayloads.push(payload);
+      if (sentPayloads.length === 1) {
+        return {
+          status: 200,
+          headers: { "content-type": "text/event-stream" },
+          text: [
+            "event: response.created",
+            "data: {\"response\":{\"id\":\"resp-failed-stream\"}}",
+            "",
+            "event: response.failed",
+            "data: {\"response\":{\"id\":\"resp-failed-stream\"}}",
+            "",
+            "data: [DONE]",
+            "",
+          ].join("\n"),
+        };
+      }
+      return {
+        status: 200,
+        headers: { "content-type": "application/json" },
+        text: JSON.stringify({ id: "resp-original-fallback", output: [] }),
+      };
+    },
+  });
+
+  assert.equal(sentPayloads.length, 2);
+  assert.equal(result.outcome, "bypassed");
+  assert.equal(result.newResponseId, undefined);
+  assert.equal(result.rebaseResponse?.status, 200);
+  assert.match(result.response.text, /resp-original-fallback/);
 });
 
 test("CDR-04 falls back to the original request after a transport error", async () => {

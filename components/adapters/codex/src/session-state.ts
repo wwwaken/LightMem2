@@ -14,10 +14,13 @@ import { join } from "node:path";
 
 export type CodexSessionSnapshot = {
   sessionId: string;
+  codexSessionId?: string;
   latestResponseId?: string;
   previousResponseId?: string;
   latestModel?: string;
+  latestUpstreamProvider?: string;
   workspaceHint?: string;
+  transcriptPath?: string;
   disclosedReadPaths?: string[];
   lastHookEvent?: string;
   lastToolName?: string;
@@ -94,10 +97,13 @@ export async function upsertCodexSessionSnapshot(
   const updatedAt = new Date().toISOString();
   const next: CodexSessionSnapshot = {
     sessionId,
+    codexSessionId: patch.codexSessionId ?? current?.codexSessionId,
     latestResponseId: patch.latestResponseId ?? current?.latestResponseId,
     previousResponseId: patch.previousResponseId ?? current?.previousResponseId,
     latestModel: patch.latestModel ?? current?.latestModel,
+    latestUpstreamProvider: patch.latestUpstreamProvider ?? current?.latestUpstreamProvider,
     workspaceHint: patch.workspaceHint ?? current?.workspaceHint,
+    transcriptPath: patch.transcriptPath ?? current?.transcriptPath,
     disclosedReadPaths: patch.disclosedReadPaths ?? current?.disclosedReadPaths,
     lastHookEvent: patch.lastHookEvent ?? current?.lastHookEvent,
     lastToolName: patch.lastToolName ?? current?.lastToolName,
@@ -131,10 +137,13 @@ export async function mergeCodexSessionSnapshot(
   if (!source) return target;
 
   return upsertCodexSessionSnapshot(stateDir, normalizedTargetSessionId, {
+    codexSessionId: target?.codexSessionId ?? source.codexSessionId,
     latestResponseId: target?.latestResponseId ?? source.latestResponseId,
     previousResponseId: target?.previousResponseId ?? source.previousResponseId,
     latestModel: target?.latestModel ?? source.latestModel,
+    latestUpstreamProvider: target?.latestUpstreamProvider ?? source.latestUpstreamProvider,
     workspaceHint: target?.workspaceHint ?? source.workspaceHint,
+    transcriptPath: target?.transcriptPath ?? source.transcriptPath,
     disclosedReadPaths: target?.disclosedReadPaths ?? source.disclosedReadPaths,
     lastHookEvent: target?.lastHookEvent ?? source.lastHookEvent,
     lastToolName: target?.lastToolName ?? source.lastToolName,

@@ -21,6 +21,15 @@ export function normalizeStatus(status: unknown, fallback: CodexJournalStatus): 
     : fallback;
 }
 
+export function normalizeObservedAt(value: string | undefined): string {
+  const observedAt = value ?? new Date().toISOString();
+  const parsed = Date.parse(observedAt);
+  if (!Number.isFinite(parsed) || new Date(parsed).toISOString() !== observedAt) {
+    throw new TypeError("Codex context-history observedAt must be a canonical ISO timestamp");
+  }
+  return observedAt;
+}
+
 export function sanitizeValue(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(sanitizeValue);
   const object = asJsonObject(value);

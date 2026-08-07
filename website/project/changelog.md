@@ -14,5 +14,5 @@
 
 ## Next
 
-- [Roadmap](/project/roadmap) — what's coming
+- [Changelog](/project/changelog) — what's coming
 - [GitHub Releases](https://github.com/zjunlp/LightMem2/releases)

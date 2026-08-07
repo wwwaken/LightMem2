@@ -30,14 +30,6 @@ lightmem2 claude-code report
 | **Cost** | Estimated API cost in USD |
 | **Cache hit rate** | Percentage of input tokens served from cache |
 
-### How to Judge If TokenPilot Is Working
-
-1. **Cache read >> cache miss**: Most input tokens are cached — stabilizer is working.
-2. **Input tokens grow slowly**: The context isn't bloating each turn.
-3. **Cost stays flat or grows slowly**: Per-turn cost isn't climbing with session length.
-
-If you see `No TokenPilot session stats yet`, the session is too new — run a few more turns and check again.
-
 ## Visual Inspector
 
 The visual inspector is a browser-based dashboard showing real-time TokenPilot behavior:
@@ -46,35 +38,7 @@ The visual inspector is a browser-based dashboard showing real-time TokenPilot b
 lightmem2 visual
 ```
 
-This opens your default browser with three views:
-
-### Stabilizer View
-
-Shows cache efficiency at a glance:
-- Stable vs. dynamic context split
-- Per-turn cache hit/miss breakdown
-- Prefix stability metrics
-
-### Reduction View
-
-Shows what was trimmed:
-- Per-turn reduction statistics
-- Tool output before/after trimming
-- Which reduction passes were applied
-
-### Eviction View
-
-Shows lifecycle pruning:
-- Current session depth (turns, tokens)
-- Eviction threshold and status
-- Number of evicted turns
-
-## Navigating the Inspector
-
-- Use the tabs at the top to switch between views
-- Use the host dropdown to change which host's data you're viewing
-- Use the session selector to view specific sessions
-- Data updates automatically as new turns complete
+This opens your default browser with three views: stabilizer, reduction, and eviction.
 
 ## Next
 

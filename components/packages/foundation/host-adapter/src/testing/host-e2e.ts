@@ -31,7 +31,9 @@ export async function withTempHome<T>(
 ): Promise<T> {
   const homeDir = await mkdtemp(join(tmpdir(), prefix));
   const originalHome = process.env.HOME;
+  const originalUserProfile = process.env.USERPROFILE;
   process.env.HOME = homeDir;
+  process.env.USERPROFILE = homeDir;
   try {
     return await fn(homeDir);
   } finally {
@@ -39,6 +41,11 @@ export async function withTempHome<T>(
       delete process.env.HOME;
     } else {
       process.env.HOME = originalHome;
+    }
+    if (originalUserProfile === undefined) {
+      delete process.env.USERPROFILE;
+    } else {
+      process.env.USERPROFILE = originalUserProfile;
     }
     await rm(homeDir, { recursive: true, force: true });
   }

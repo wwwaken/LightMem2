@@ -8,12 +8,35 @@ import { createCodexCliBridge } from "../../../products/cli/src/hosts/codex.js";
 import { loadTokenPilotCodexConfig, defaultTokenPilotConfigPath } from "../src/config.js";
 import { indexCodexHostSessionAlias } from "../src/session-state.js";
 
+const ISOLATED_ENV_KEYS = [
+  "HOME",
+  "USERPROFILE",
+  "TOKENPILOT_CODEX_CONFIG",
+  "CODEX_CONFIG_PATH",
+  "CODEX_HOOKS_CONFIG_PATH",
+  "OPENCLAW_CONFIG_PATH",
+] as const;
+
+function isolateCodexTestEnvironment(homeDir: string): () => void {
+  const originals = new Map(ISOLATED_ENV_KEYS.map((key) => [key, process.env[key]]));
+  process.env.HOME = homeDir;
+  process.env.USERPROFILE = homeDir;
+  process.env.TOKENPILOT_CODEX_CONFIG = join(homeDir, ".codex", "tokenpilot.json");
+  process.env.CODEX_CONFIG_PATH = join(homeDir, ".codex", "config.toml");
+  process.env.CODEX_HOOKS_CONFIG_PATH = join(homeDir, ".codex", "hooks.json");
+  process.env.OPENCLAW_CONFIG_PATH = join(homeDir, ".openclaw", "openclaw.json");
+  return () => {
+    for (const key of ISOLATED_ENV_KEYS) {
+      const original = originals.get(key);
+      if (original === undefined) delete process.env[key];
+      else process.env[key] = original;
+    }
+  };
+}
+
 test("codex cli bridge exposes only the supported Codex command surface", async () => {
   const dir = await mkdtemp(join(tmpdir(), "lightmem2-codex-bridge-"));
-  const originalHome = process.env.HOME;
-  const originalConfigPath = process.env.OPENCLAW_CONFIG_PATH;
-  process.env.HOME = dir;
-  process.env.OPENCLAW_CONFIG_PATH = join(dir, ".openclaw", "openclaw.json");
+  const restoreEnvironment = isolateCodexTestEnvironment(dir);
   try {
     await mkdir(join(dir, ".openclaw"), { recursive: true });
     await writeFile(
@@ -21,7 +44,12 @@ test("codex cli bridge exposes only the supported Codex command surface", async 
       `${JSON.stringify({ plugins: { entries: {} } }, null, 2)}\n`,
       "utf8",
     );
-    const { handleCommand } = createCodexCliBridge({ host: "codex" });
+    const { handleCommand } = createCodexCliBridge({
+      host: "codex",
+      async handleVisualCommand({ host, sessionId }) {
+        return { text: `LightMem2 visual: http://127.0.0.1:19998/?host=${host ?? ""}&session=${sessionId ?? ""}` };
+      },
+    });
 
     const status = await handleCommand({ args: "status" });
     assert.match(status.text, /TokenPilot Codex status:/);
@@ -63,27 +91,14 @@ test("codex cli bridge exposes only the supported Codex command surface", async 
     const unsupportedReductionPass = await handleCommand({ args: "reduction pass formatSlimming on" });
     assert.equal(unsupportedReductionPass.text, "Codex reduction supports only these passes: readStateCompaction, toolPayloadTrim, htmlSlimming, execOutputTruncation, agentsStartupOptimization");
   } finally {
-    if (originalHome === undefined) {
-      delete process.env.HOME;
-    } else {
-      process.env.HOME = originalHome;
-    }
-    if (originalConfigPath === undefined) {
-      delete process.env.OPENCLAW_CONFIG_PATH;
-    } else {
-      process.env.OPENCLAW_CONFIG_PATH = originalConfigPath;
-    }
+    restoreEnvironment();
     await rm(dir, { recursive: true, force: true });
   }
 });
 
 test("codex cli bridge follows custom config env paths instead of the default home paths", async () => {
   const dir = await mkdtemp(join(tmpdir(), "lightmem2-codex-bridge-custom-paths-"));
-  const originalHome = process.env.HOME;
-  const originalCodexConfigPath = process.env.CODEX_CONFIG_PATH;
-  const originalHooksConfigPath = process.env.CODEX_HOOKS_CONFIG_PATH;
-  const originalTokenPilotConfigPath = process.env.TOKENPILOT_CODEX_CONFIG;
-  process.env.HOME = join(dir, "real-home");
+  const restoreEnvironment = isolateCodexTestEnvironment(join(dir, "real-home"));
   process.env.CODEX_CONFIG_PATH = join(dir, "isolated", "config.toml");
   process.env.CODEX_HOOKS_CONFIG_PATH = join(dir, "isolated", "hooks.json");
   process.env.TOKENPILOT_CODEX_CONFIG = join(dir, "isolated", "tokenpilot.json");
@@ -117,24 +132,14 @@ test("codex cli bridge follows custom config env paths instead of the default ho
     const reloaded = await loadTokenPilotCodexConfig(process.env.TOKENPILOT_CODEX_CONFIG!);
     assert.equal(reloaded.stateDir, join(dir, "isolated", "tokenpilot-state", "tokenpilot"));
   } finally {
-    if (originalHome === undefined) delete process.env.HOME;
-    else process.env.HOME = originalHome;
-    if (originalCodexConfigPath === undefined) delete process.env.CODEX_CONFIG_PATH;
-    else process.env.CODEX_CONFIG_PATH = originalCodexConfigPath;
-    if (originalHooksConfigPath === undefined) delete process.env.CODEX_HOOKS_CONFIG_PATH;
-    else process.env.CODEX_HOOKS_CONFIG_PATH = originalHooksConfigPath;
-    if (originalTokenPilotConfigPath === undefined) delete process.env.TOKENPILOT_CODEX_CONFIG;
-    else process.env.TOKENPILOT_CODEX_CONFIG = originalTokenPilotConfigPath;
+    restoreEnvironment();
     await rm(dir, { recursive: true, force: true });
   }
 });
 
 test("codex cli bridge visual opens the shared browser visual pinned to the codex session", async () => {
   const dir = await mkdtemp(join(tmpdir(), "lightmem2-codex-bridge-visual-"));
-  const originalHome = process.env.HOME;
-  const originalConfigPath = process.env.OPENCLAW_CONFIG_PATH;
-  process.env.HOME = dir;
-  process.env.OPENCLAW_CONFIG_PATH = join(dir, ".openclaw", "openclaw.json");
+  const restoreEnvironment = isolateCodexTestEnvironment(dir);
   try {
     const stateDir = join(dir, ".codex", "tokenpilot-state", "tokenpilot");
     const claudeStateDir = join(dir, ".claude", "tokenpilot-state", "tokenpilot");
@@ -202,31 +207,34 @@ test("codex cli bridge visual opens the shared browser visual pinned to the code
       "utf8",
     );
 
-    const { handleCommand } = createCodexCliBridge({ host: "codex" });
+    let visualSelection: { host?: string; sessionId?: string } | undefined;
+    const { handleCommand } = createCodexCliBridge({
+      host: "codex",
+      async handleVisualCommand(selection) {
+        visualSelection = selection;
+        return {
+          text: [
+            `LightMem2 visual: http://127.0.0.1:19998/?host=${selection.host ?? ""}&session=${selection.sessionId ?? ""}`,
+            "- Codex: 0 session snapshots",
+          ].join("\n"),
+        };
+      },
+    });
     const visual = await handleCommand({ args: "visual" });
     assert.match(visual.text, /LightMem2 visual: http:\/\/127\.0\.0\.1:/);
     assert.match(visual.text, /host=codex/);
     assert.match(visual.text, /session=session-1/);
     assert.match(visual.text, /Codex: 0 session snapshots/);
+    assert.deepEqual(visualSelection, { host: "codex", sessionId: "session-1" });
   } finally {
-    if (originalHome === undefined) {
-      delete process.env.HOME;
-    } else {
-      process.env.HOME = originalHome;
-    }
-    if (originalConfigPath === undefined) {
-      delete process.env.OPENCLAW_CONFIG_PATH;
-    } else {
-      process.env.OPENCLAW_CONFIG_PATH = originalConfigPath;
-    }
+    restoreEnvironment();
     await rm(dir, { recursive: true, force: true });
   }
 });
 
 test("codex cli bridge report explains when a session has no recorded savings yet", async () => {
   const dir = await mkdtemp(join(tmpdir(), "lightmem2-codex-bridge-report-empty-"));
-  const originalHome = process.env.HOME;
-  process.env.HOME = dir;
+  const restoreEnvironment = isolateCodexTestEnvironment(dir);
   try {
     const stateDir = join(dir, ".codex", "tokenpilot-state", "tokenpilot");
     await mkdir(join(stateDir, "ux-effects"), { recursive: true });
@@ -248,19 +256,14 @@ test("codex cli bridge report explains when a session has no recorded savings ye
     const report = await handleCommand({ args: "report" });
     assert.equal(report.text, "No TokenPilot savings recorded yet for session session-empty.");
   } finally {
-    if (originalHome === undefined) {
-      delete process.env.HOME;
-    } else {
-      process.env.HOME = originalHome;
-    }
+    restoreEnvironment();
     await rm(dir, { recursive: true, force: true });
   }
 });
 
 test("codex cli bridge accepts a real codex session id and resolves it to the synthesized session", async () => {
   const dir = await mkdtemp(join(tmpdir(), "lightmem2-codex-bridge-real-session-"));
-  const originalHome = process.env.HOME;
-  process.env.HOME = dir;
+  const restoreEnvironment = isolateCodexTestEnvironment(dir);
   try {
     const stateDir = join(dir, ".codex", "tokenpilot-state", "tokenpilot");
     await mkdir(join(stateDir, "ux-effects", "sessions"), { recursive: true });
@@ -302,19 +305,14 @@ test("codex cli bridge accepts a real codex session id and resolves it to the sy
     const report = await handleCommand({ args: "report" });
     assert.match(report.text, /session: codex-synth-a/);
   } finally {
-    if (originalHome === undefined) {
-      delete process.env.HOME;
-    } else {
-      process.env.HOME = originalHome;
-    }
+    restoreEnvironment();
     await rm(dir, { recursive: true, force: true });
   }
 });
 
 test("codex cli bridge persists only supported settings across reload", async () => {
   const dir = await mkdtemp(join(tmpdir(), "lightmem2-codex-bridge-persist-"));
-  const originalHome = process.env.HOME;
-  process.env.HOME = dir;
+  const restoreEnvironment = isolateCodexTestEnvironment(dir);
   try {
     const bridge = createCodexCliBridge({ host: "codex" });
 
@@ -332,19 +330,14 @@ test("codex cli bridge persists only supported settings across reload", async ()
     assert.equal(reloaded.hooks.dynamicContextTarget, "user");
     assert.equal("ux" in (reloaded as unknown as Record<string, unknown>), false);
   } finally {
-    if (originalHome === undefined) {
-      delete process.env.HOME;
-    } else {
-      process.env.HOME = originalHome;
-    }
+    restoreEnvironment();
     await rm(dir, { recursive: true, force: true });
   }
 });
 
 test("codex mode writes only codex-supported fields", async () => {
   const dir = await mkdtemp(join(tmpdir(), "lightmem2-codex-bridge-mode-"));
-  const originalHome = process.env.HOME;
-  process.env.HOME = dir;
+  const restoreEnvironment = isolateCodexTestEnvironment(dir);
   try {
     const bridge = createCodexCliBridge({ host: "codex" });
 
@@ -365,19 +358,14 @@ test("codex mode writes only codex-supported fields", async () => {
     assert.equal("policy" in modules, false);
     assert.equal("eviction" in modules, false);
   } finally {
-    if (originalHome === undefined) {
-      delete process.env.HOME;
-    } else {
-      process.env.HOME = originalHome;
-    }
+    restoreEnvironment();
     await rm(dir, { recursive: true, force: true });
   }
 });
 
 test("codex config normalization strips unsupported reduction pass options", async () => {
   const dir = await mkdtemp(join(tmpdir(), "lightmem2-codex-bridge-sanitize-"));
-  const originalHome = process.env.HOME;
-  process.env.HOME = dir;
+  const restoreEnvironment = isolateCodexTestEnvironment(dir);
   try {
     const bridge = createCodexCliBridge({ host: "codex" });
     const current = await loadTokenPilotCodexConfig(defaultTokenPilotConfigPath());
@@ -399,11 +387,7 @@ test("codex config normalization strips unsupported reduction pass options", asy
     assert.equal("pathTruncation" in reloaded.reduction.passOptions, false);
     assert.deepEqual(reloaded.reduction.passOptions.htmlSlimming, { preserveTables: true });
   } finally {
-    if (originalHome === undefined) {
-      delete process.env.HOME;
-    } else {
-      process.env.HOME = originalHome;
-    }
+    restoreEnvironment();
     await rm(dir, { recursive: true, force: true });
   }
 });

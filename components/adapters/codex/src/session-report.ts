@@ -9,6 +9,17 @@ import {
 } from "@lightmem2/product-surface";
 import { readRecentCodexCacheAuditRecordsForSession, summarizeCodexCacheAudit } from "./cache-audit.js";
 import {
+  formatCodexRebaseCapabilityStatus,
+  readCodexRebaseCapabilityJournal,
+  readCodexRebaseCooldownJournal,
+  readCodexRebaseEpochJournal,
+} from "./context-rewrite/index.js";
+import type {
+  CodexRebaseCooldown,
+  CodexRebaseEpoch,
+  CodexRebaseEpochStatus,
+} from "./context-rewrite/types.js";
+import {
   loadCodexRecentTurnBindings,
   loadCodexSessionSnapshot,
   resolveCanonicalCodexSessionId,
@@ -28,6 +39,133 @@ export type CodexSessionTopology = {
   updatedAt?: string;
   turnCount: number;
 };
+
+function timestampMs(value: unknown): number | undefined {
+  if (typeof value !== "string") return undefined;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function activeCooldowns(cooldowns: CodexRebaseCooldown[]): CodexRebaseCooldown[] {
+  const now = Date.now();
+  return cooldowns.filter((entry) => {
+    const expiresAtMs = timestampMs(entry.expiresAt);
+    return expiresAtMs !== undefined && expiresAtMs > now;
+  });
+}
+
+function countEpochs(epochs: CodexRebaseEpoch[]): Record<CodexRebaseEpochStatus, number> {
+  return {
+    pending: epochs.filter((entry) => entry.status === "pending").length,
+    committed: epochs.filter((entry) => entry.status === "committed").length,
+    failed: epochs.filter((entry) => entry.status === "failed").length,
+    rolled_back: epochs.filter((entry) => entry.status === "rolled_back").length,
+  };
+}
+
+function latestEpoch(epochs: CodexRebaseEpoch[]): CodexRebaseEpoch | undefined {
+  return epochs.at(-1);
+}
+
+function latestCooldown(cooldowns: CodexRebaseCooldown[]): CodexRebaseCooldown | undefined {
+  return cooldowns.at(-1);
+}
+
+function formatCharsAndTokens(chars: number, tokens: number): string {
+  return `${chars} chars (~${tokens} tokens)`;
+}
+
+function formatCodexRebaseAccounting(epoch: CodexRebaseEpoch): string | undefined {
+  const accounting = epoch.accounting;
+  if (!accounting) return undefined;
+  return "- CDR-02 rebase accounting: "
+    + `planned_saved=${formatCharsAndTokens(accounting.plannedSavedChars, accounting.plannedSavedTokens)}, `
+    + `removed=${formatCharsAndTokens(accounting.actuallyRemovedChars, accounting.actuallyRemovedTokens)}, `
+    + `replay_cost=${formatCharsAndTokens(accounting.rebaseReplayCostChars, accounting.rebaseReplayCostTokens)}, `
+    + `subsequent_saved=${accounting.subsequentSavedCharsPerTurn} chars/turn `
+    + `(~${accounting.subsequentSavedTokensPerTurn} tokens/turn), `
+    + `estimator_cost=${formatCharsAndTokens(accounting.estimatorCostChars, accounting.estimatorCostTokens)}, `
+    + `fallback_extra_requests=${accounting.fallbackExtraRequestCount} `
+    + `cache_cold_misses=${accounting.cacheColdMissCount} `
+    + `break_even_turn=${accounting.breakEvenTurn ?? "never"}`;
+}
+
+async function buildCodexRebaseReportLines(
+  stateDir: string,
+  sessionId: string,
+): Promise<string[]> {
+  const [epochJournal, cooldownJournal, capabilityJournal] = await Promise.all([
+    readCodexRebaseEpochJournal(stateDir, sessionId),
+    readCodexRebaseCooldownJournal(stateDir, sessionId),
+    readCodexRebaseCapabilityJournal(stateDir),
+  ]);
+  const readErrors = [
+    epochJournal.readError ? `epoch=${epochJournal.readError}` : "",
+    cooldownJournal.readError ? `cooldown=${cooldownJournal.readError}` : "",
+    capabilityJournal.readError ? `capability=${capabilityJournal.readError}` : "",
+  ].filter(Boolean);
+  const epochs = epochJournal.epochs;
+  const cooldowns = cooldownJournal.cooldowns;
+  const capabilities = capabilityJournal.capabilities;
+  if (
+    epochs.length === 0
+    && cooldowns.length === 0
+    && capabilities.length === 0
+    && readErrors.length === 0
+  ) {
+    return [];
+  }
+
+  const counts = countEpochs(epochs);
+  const latest = latestEpoch(epochs);
+  const currentCooldowns = activeCooldowns(cooldowns);
+  const cooldown = latestCooldown(cooldowns);
+  const capabilityJournalTrusted = !capabilityJournal.readError
+    && capabilityJournal.malformedLineCount === 0;
+  const capabilityStatus = capabilityJournalTrusted
+    ? capabilities.map((entry) => formatCodexRebaseCapabilityStatus(entry)).sort()
+    : [];
+  const malformedRows =
+    epochJournal.malformedLineCount
+    + cooldownJournal.malformedLineCount
+    + capabilityJournal.malformedLineCount;
+  const lines = [
+    "- CDR-03 rebase epochs: "
+      + `committed=${counts.committed}, `
+      + `rolled_back=${counts.rolled_back}, `
+      + `failed=${counts.failed}, `
+      + `pending=${counts.pending}`,
+  ];
+  if (latest) {
+    lines.push(
+      "- CDR-03 latest rebase epoch: "
+        + `${latest.status} ${latest.epochId} `
+        + `old=${latest.oldPreviousResponseId}`
+        + (latest.newResponseId ? ` new=${latest.newResponseId}` : ""),
+    );
+    const accountingLine = formatCodexRebaseAccounting(latest);
+    if (accountingLine) lines.push(accountingLine);
+  }
+  if (cooldowns.length > 0) {
+    lines.push(
+      "- CDR-04 rebase cooldowns: "
+        + `active=${currentCooldowns.length}/${cooldowns.length}`
+        + (cooldown ? ` latest=${cooldown.reason} expires=${cooldown.expiresAt}` : ""),
+    );
+  }
+  if (capabilityStatus.length > 0) {
+    lines.push(`- CDR-05 rebase capability cache: ${capabilityStatus.join(", ")}`);
+  } else if (!capabilityJournalTrusted) {
+    lines.push("- CDR-05 rebase capability cache: untrusted; runtime will bypass rebase");
+  }
+  if (malformedRows > 0) {
+    lines.push(`- rebase journal malformed rows: ${malformedRows}`);
+  }
+  if (readErrors.length > 0) {
+    lines.push(`- rebase journal read errors: ${readErrors.join(", ")}`);
+  }
+  return lines;
+}
 
 export async function resolveCodexSessionTopology(
   stateDir: string,
@@ -76,8 +214,9 @@ export async function renderCodexSessionReport(stateDir: string, sessionRef?: st
   const cacheAuditSummary = cacheAuditRecords.length > 0
     ? summarizeCodexCacheAudit(cacheAuditRecords)
     : null;
+  const rebaseReportLines = await buildCodexRebaseReportLines(stateDir, topology.sessionId);
 
-  return renderSessionReport({
+  const baseReport = await renderSessionReport({
     stateDir,
     title: "TokenPilot Codex report:",
     sessionId: topology.sessionId,
@@ -89,4 +228,7 @@ export async function renderCodexSessionReport(stateDir: string, sessionRef?: st
       readAggregate: readUxSessionAggregate,
     },
   });
+  return rebaseReportLines.length > 0
+    ? `${baseReport}\n${rebaseReportLines.join("\n")}`
+    : baseReport;
 }

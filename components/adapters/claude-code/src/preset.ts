@@ -5,7 +5,7 @@ import {
 
 export const CLAUDE_CODE_TOKENPILOT_HOST_BINDING = createTokenPilotHostBinding({
   hostId: "claude-code",
-  supportedFeatures: ["stabilizer", "reduction"],
+  supportedFeatures: ["stabilizer", "reduction", "eviction"],
 });
 
 export function initializeClaudeCodeTokenPilotPreset(): void {

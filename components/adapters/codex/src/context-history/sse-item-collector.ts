@@ -218,7 +218,9 @@ function mergeContentPart(item: JsonObject, data: JsonObject): void {
   if (!part) return;
 
   const existing = ensureContentPart(item, data);
+  const before = { ...existing };
   Object.assign(existing, part);
+  preserveNonEmptyString(existing, before, part, "text");
 }
 
 function appendOutputText(item: JsonObject, data: JsonObject): void {
@@ -235,6 +237,7 @@ function setOutputText(item: JsonObject, data: JsonObject): void {
   if (text === undefined) return;
 
   const part = ensureContentPart(item, data);
+  if (text.length === 0 && typeof part.text === "string" && part.text.length > 0) return;
   if (typeof part.type !== "string") part.type = "output_text";
   part.text = text;
 }
@@ -246,7 +249,9 @@ function appendStringField(item: JsonObject, field: string, delta: unknown): voi
 }
 
 function setStringField(item: JsonObject, field: string, value: unknown): void {
-  if (typeof value === "string") item[field] = value;
+  if (typeof value !== "string") return;
+  if (value.length === 0 && typeof item[field] === "string" && item[field].length > 0) return;
+  item[field] = value;
 }
 
 function reasoningText(data: JsonObject): string | undefined {
@@ -278,7 +283,9 @@ function mergeReasoningSummaryPart(item: JsonObject, data: JsonObject): void {
   if (!part) return;
 
   const existing = ensureReasoningSummaryPart(item, data);
+  const before = { ...existing };
   Object.assign(existing, part);
+  preserveNonEmptyString(existing, before, part, "text");
 }
 
 function appendReasoningSummaryText(item: JsonObject, data: JsonObject): void {
@@ -295,6 +302,7 @@ function setReasoningSummaryText(item: JsonObject, data: JsonObject): void {
   if (text === undefined) return;
 
   const part = ensureReasoningSummaryPart(item, data);
+  if (text.length === 0 && typeof part.text === "string" && part.text.length > 0) return;
   if (typeof part.type !== "string") part.type = "summary_text";
   part.text = text;
 }

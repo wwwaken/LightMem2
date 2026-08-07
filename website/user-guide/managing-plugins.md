@@ -1,6 +1,6 @@
 # Managing Plugins
 
-Plugins are the core unit of functionality in LightMem2. This page covers how to list, inspect, and manage installed plugins.
+Plugins are the core unit of functionality in LightMem2. This page covers how to list and manage installed plugins.
 
 ## List Installed Plugins
 
@@ -9,22 +9,6 @@ lightmem2 status
 ```
 
 Shows all installed plugins and their state.
-
-## Check Plugin Details
-
-```bash
-lightmem2 status --details
-```
-
-Shows per-plugin configuration, mode, and runtime state.
-
-## Plugin States
-
-| State | Meaning |
-| :-- | :-- |
-| **Enabled** | Plugin is loaded and active |
-| **Disabled** | Plugin is installed but not running |
-| **Error** | Plugin failed to load — check logs |
 
 ## Switching the Default Host
 
@@ -57,6 +41,6 @@ Shows:
 
 ## Next
 
-- [Enabling and Disabling Plugins](/user-guide/enabling-disabling)
+- [Managing Plugins](/user-guide/managing-plugins)
 - [Plugin Configuration](/user-guide/plugin-configuration)
 - [CLI Reference](/user-guide/cli-reference)

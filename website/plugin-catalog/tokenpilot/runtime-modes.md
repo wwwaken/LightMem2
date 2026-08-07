@@ -9,7 +9,9 @@ TokenPilot provides three runtime modes: **conservative**, **normal**, and **agg
 | **Stable Prefix** | On | On | On |
 | **Stabilizer target** | Developer | Developer | User |
 | **Reduction** | Light | Balanced | Strong |
-| **Eviction** | Off | On | On (lower threshold) |
+| **Reduction trigger** | 4000 chars | 2200 chars | 1400 chars |
+| **Max tool chars** | 1800 | 1200 | 900 |
+| **Eviction** | Off | Off | On |
 | **Risk of signal loss** | Very low | Low | Moderate |
 | **Token savings** | Moderate | High | Maximum |
 
@@ -25,8 +27,6 @@ lightmem2 mode conservative
 - Reduction applies light trimming only — removes truly redundant output
 - Eviction is disabled — full history is always available
 
-**Best for**: debugging, sensitive workflows, first-time use to build confidence.
-
 ## Normal Mode
 
 The **default and recommended mode** for most sessions.
@@ -37,9 +37,7 @@ lightmem2 mode normal
 
 - Stabilizer rewrites context and attaches dynamic content at the developer level
 - Reduction applies balanced trimming — removes noise while keeping signal
-- Eviction is enabled with standard thresholds
-
-**Best for**: everyday agent work, long sessions, shared sessions.
+- Eviction is **disabled** by default — for most sessions, reduction alone is sufficient
 
 ## Aggressive Mode
 
@@ -53,16 +51,18 @@ lightmem2 mode aggressive
 - Reduction applies strong trimming — may discard borderline-useful output
 - Eviction is enabled with lower thresholds — older context is dropped sooner
 
-**Best for**: very long sessions, cost-sensitive environments, when you've verified quality in normal mode first.
-
 ## Switching Modes Mid-Session
 
 You can change modes at any time — no restart needed:
 
 ```bash
-# Per-host
+# Per-host (OpenClaw supports all three modes)
 lightmem2 openclaw mode aggressive
+
+# Codex and Claude Code only support conservative and normal
 lightmem2 codex mode conservative
+lightmem2 codex mode normal
+lightmem2 claude-code mode conservative
 lightmem2 claude-code mode normal
 
 # Or inside OpenClaw session
@@ -70,19 +70,6 @@ lightmem2 claude-code mode normal
 ```
 
 The new mode takes effect on the next turn.
-
-## How to Choose
-
-1. **Start with normal**. It's the safe default for most users.
-2. **If you notice any missing context**, switch to conservative.
-3. **If normal works well and you want more savings**, try aggressive.
-4. **Check your report** after a few turns to see the impact:
-
-```bash
-lightmem2 report
-```
-
-Compare token counts and cost across modes to find the right balance for your sessions.
 
 ## Next
 

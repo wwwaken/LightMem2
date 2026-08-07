@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import type { CodexContextRewriteConfig, CodexMutationPlan } from "./context-rewrite/types.js";
 
 export type CodexProviderConfig = {
   name?: string;
@@ -30,6 +31,9 @@ export type TokenPilotCodexConfig = {
   modules: {
     stabilizer: boolean;
     reduction: boolean;
+  };
+  contextRewrite: CodexContextRewriteConfig & {
+    mutationPlan?: CodexMutationPlan;
   };
   reduction: {
     triggerMinChars: number;
@@ -126,6 +130,24 @@ function sanitizeCodexReductionPassOptions(raw: unknown): Record<string, Record<
   return output;
 }
 
+function sanitizeCodexMutationPlan(raw: unknown): CodexMutationPlan | undefined {
+  const input = asRecord(raw);
+  if (!Array.isArray(input.operations)) return undefined;
+  const operations = input.operations
+    .filter((operation) => operation && typeof operation === "object" && !Array.isArray(operation))
+    .map((operation) => {
+      const next = operation as Record<string, unknown>;
+      return {
+        type: typeof next.type === "string" ? next.type : "",
+        stableItemId: stringValue(next.stableItemId),
+      };
+    });
+  return {
+    baseRevision: stringValue(input.baseRevision),
+    operations,
+  };
+}
+
 export function normalizeTokenPilotCodexConfig(
   raw: unknown,
   options?: NormalizeCodexConfigOptions,
@@ -134,6 +156,7 @@ export function normalizeTokenPilotCodexConfig(
   const proxyMode = asRecord(obj.proxyMode);
   const hooks = asRecord(obj.hooks);
   const modules = asRecord(obj.modules);
+  const contextRewrite = asRecord(obj.contextRewrite);
   const reduction = asRecord(obj.reduction);
   const passes = asRecord(reduction.passes);
   const upstream = asRecord(obj.upstream);
@@ -167,6 +190,18 @@ export function normalizeTokenPilotCodexConfig(
     modules: {
       stabilizer: boolValue(modules.stabilizer, true),
       reduction: boolValue(modules.reduction, true),
+    },
+    contextRewrite: {
+      enabled: boolValue(contextRewrite.enabled, false),
+      mode: "response_chain_rebase",
+      failureMode: "bypass",
+      retryOriginalRequest: boolValue(contextRewrite.retryOriginalRequest, true),
+      cooldownMs: numberValue(contextRewrite.cooldownMs, 300_000, 0, 86_400_000),
+      providerCompatibilityProbe: contextRewrite.providerCompatibilityProbe === "mock_fixture"
+        || contextRewrite.providerCompatibilityProbe === "real_provider"
+        ? contextRewrite.providerCompatibilityProbe
+        : "disabled",
+      mutationPlan: sanitizeCodexMutationPlan(contextRewrite.mutationPlan),
     },
     reduction: {
       triggerMinChars: numberValue(reduction.triggerMinChars, 2200, 256, 1_000_000),
@@ -210,7 +245,7 @@ function parseTomlStringValue(raw: string | undefined): string | undefined {
   if (typeof raw !== "string") return undefined;
   const trimmed = raw.trim();
   if (trimmed.startsWith("\"") && trimmed.endsWith("\"")) {
-    return trimmed.slice(1, -1).replace(/\\"/g, "\"");
+    return trimmed.slice(1, -1).replace(/\\"/g, "\"").replace(/\\\\/g, "\\");
   }
   if (trimmed.startsWith("'") && trimmed.endsWith("'")) {
     return trimmed.slice(1, -1);

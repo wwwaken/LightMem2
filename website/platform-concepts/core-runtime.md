@@ -12,37 +12,6 @@ The LightMem2 core runtime is the **host-independent execution engine** that loa
 | **Event routing** | Dispatches host events (messages, tool calls, session state changes) to plugins |
 | **Resource isolation** | Ensures plugins cannot interfere with each other or the host |
 
-## How It Fits Together
-
-```text
-┌──────────────────────────────────────────┐
-│              Agent Host                   │
-│   (OpenClaw / Codex / Claude Code)        │
-└────────────────┬─────────────────────────┘
-                 │ Host events & messages
-┌────────────────▼─────────────────────────┐
-│          Host Adapter                     │
-│   Translates host-specific events         │
-└────────────────┬─────────────────────────┘
-                 │ Standardized events
-┌────────────────▼─────────────────────────┐
-│          Core Runtime                     │
-│   Plugin lifecycle · Config · Routing     │
-└────┬──────────────┬──────────────┬───────┘
-     │              │              │
-┌────▼───┐   ┌──────▼──────┐   ┌──▼────────┐
-│Plugin A│   │  Plugin B   │   │ Plugin C   │
-└────────┘   └─────────────┘   └───────────┘
-```
-
-The core runtime never talks to the host directly — it always goes through the host adapter. This is what enables a plugin written once to run on any supported host.
-
-## Key Design Decisions
-
-- **No network dependency**. The runtime runs entirely locally inside the host process or as a sidecar proxy.
-- **Plugin isolation**. Plugins don't import each other; communication happens through well-defined events.
-- **Configuration cascade**. Defaults → host config → plugin config → user overrides, with later layers taking precedence.
-
 ## Current Implementation
 
 The core runtime is implemented across these workspace packages:

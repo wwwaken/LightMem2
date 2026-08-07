@@ -142,6 +142,10 @@ export type RewriteCanonicalStateParams = {
   evictionPolicy?: string;
   evictionMinBlockChars?: number;
   evictionReplacementMode?: "pointer_stub" | "drop";
+  /** Restrict this rewrite to a subset already marked evictable in the registry. */
+  evictionTaskIds?: string[];
+  /** Disable registry-derived annotations when applying an immutable mutation plan. */
+  annotateTaskAnchors?: boolean;
   helpers: RewriteHelpers;
   applyCanonicalEviction: CanonicalEvictionAdapter;
 };
@@ -151,17 +155,30 @@ export async function rewriteCanonicalState(params: RewriteCanonicalStateParams)
   changed: boolean;
   appliedEvictionTaskIds: string[];
 }> {
-  const registry = await loadSessionTaskRegistry(params.stateDir, params.sessionId);
+  const loadedRegistry = await loadSessionTaskRegistry(params.stateDir, params.sessionId);
+  const requestedTaskIds = params.evictionTaskIds === undefined
+    ? undefined
+    : new Set(params.evictionTaskIds.map((taskId) => taskId.trim()).filter(Boolean));
+  const registry = requestedTaskIds === undefined
+    ? loadedRegistry
+    : {
+        ...loadedRegistry,
+        evictableTaskIds: loadedRegistry.evictableTaskIds.filter((taskId) =>
+          requestedTaskIds.has(taskId),
+        ),
+      };
   const startMessages = params.state.messages;
   let messages = startMessages;
   let changed = false;
-  const annotated = annotateCanonicalMessagesWithTaskAnchors(
-    messages,
-    registry,
-    params.helpers.asRecord,
-    params.helpers.dedupeStrings,
-    params.helpers.ensureContextSafeDetails,
-  );
+  const annotated = params.annotateTaskAnchors === false
+    ? { messages, changed: false }
+    : annotateCanonicalMessagesWithTaskAnchors(
+        messages,
+        registry,
+        params.helpers.asRecord,
+        params.helpers.dedupeStrings,
+        params.helpers.ensureContextSafeDetails,
+      );
   if (annotated.changed) {
     messages = annotated.messages;
     changed = true;
@@ -200,6 +217,7 @@ export async function rewriteCanonicalState(params: RewriteCanonicalStateParams)
       appliedCount: evictionApplied.appliedCount,
       appliedTaskIds: evictionApplied.appliedTaskIds,
       evictableTaskIds: registry.evictableTaskIds,
+      requestedTaskIds: params.evictionTaskIds,
       replacementMode,
     });
     params.helpers.logger?.info(
@@ -217,6 +235,8 @@ export async function rewriteCanonicalState(params: RewriteCanonicalStateParams)
     beforeChars: estimateMessagesChars(startMessages, params.helpers.contentToText),
     afterChars: estimateMessagesChars(messages, params.helpers.contentToText),
     evictableTaskIds: registry.evictableTaskIds,
+    requestedTaskIds: params.evictionTaskIds,
+    taskAnchorAnnotationEnabled: params.annotateTaskAnchors !== false,
   });
   return {
     state: changed

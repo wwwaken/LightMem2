@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import test, { after, before } from "node:test";
 import { spawn } from "node:child_process";
 import { chmod, lstat, mkdtemp, mkdir, readFile, readlink, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { createServer } from "node:net";
+import { reserveUnusedPort } from "@lightmem2/host-adapter";
 import { readCliContextState } from "../../../products/cli/src/context-store.js";
 import {
   loadTokenPilotCodexConfig,
@@ -18,18 +19,80 @@ import {
   resolveCodexHookCommandForInstall,
 } from "../src/install.js";
 
+const originalSuiteHome = process.env.HOME;
+const originalSuiteUserProfile = process.env.USERPROFILE;
+let installSuiteHome = "";
+
+before(async () => {
+  installSuiteHome = await mkdtemp(join(tmpdir(), "lightmem2-codex-install-suite-"));
+  process.env.HOME = installSuiteHome;
+  process.env.USERPROFILE = installSuiteHome;
+});
+
+after(async () => {
+  if (originalSuiteHome === undefined) delete process.env.HOME;
+  else process.env.HOME = originalSuiteHome;
+  if (originalSuiteUserProfile === undefined) delete process.env.USERPROFILE;
+  else process.env.USERPROFILE = originalSuiteUserProfile;
+  if (installSuiteHome) {
+    await rm(installSuiteHome, { recursive: true, force: true });
+  }
+});
+
 function installCodexTokenPilot(
   params: NonNullable<Parameters<typeof installCodexTokenPilotBase>[0]>,
 ) {
+  const testRoot = dirname(params.codexConfigPath ?? params.tokenPilotConfigPath ?? tmpdir());
   return installCodexTokenPilotBase({
     ...params,
-    cliContextPath: join(
-      dirname(params.codexConfigPath ?? params.tokenPilotConfigPath ?? tmpdir()),
-      ".lightmem2",
-      "state",
-      "cli-context.json",
-    ),
+    cliBinDir: params.cliBinDir ?? join(testRoot, "bin"),
+    cliContextPath: join(testRoot, ".lightmem2", "state", "cli-context.json"),
   });
+}
+
+function parseGeneratedShellCommand(command: string): string[] {
+  const args: string[] = [];
+  let current = "";
+  let quoted = false;
+  let started = false;
+
+  for (let index = 0; index < command.length; index += 1) {
+    const character = command[index] ?? "";
+    if (quoted) {
+      if (character === "\\") {
+        const escaped = command[index + 1];
+        if (escaped === "\\" || escaped === "\"") {
+          current += escaped;
+          index += 1;
+        } else {
+          current += character;
+        }
+      } else if (character === "\"") {
+        quoted = false;
+      } else {
+        current += character;
+      }
+      continue;
+    }
+
+    if (character === "\"") {
+      quoted = true;
+      started = true;
+    } else if (/\s/u.test(character)) {
+      if (started) {
+        args.push(current);
+        current = "";
+        started = false;
+      }
+    } else {
+      current += character;
+      started = true;
+    }
+  }
+
+  assert.equal(quoted, false, "generated shell command contains an unterminated quote");
+  if (started) args.push(current);
+  return args;
 }
 
 test("installCodexTokenPilot writes provider, MCP, and hooks with expected commands", async () => {
@@ -67,11 +130,11 @@ test("installCodexTokenPilot writes provider, MCP, and hooks with expected comma
     assert.doesNotMatch(codexToml, /\[model_providers\.tokenpilot\]/);
     assert.match(codexToml, /\[mcp_servers\.tokenpilot_memory_fault_recover\]/);
     assert.match(codexToml, /startup_timeout_sec\s*=\s*90/);
-    assert.match(codexToml, new RegExp(result.expectedMcpCommand.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    assert.equal(codexToml.includes(`command = ${JSON.stringify(result.expectedMcpCommand)}`), true);
     assert.equal(result.expectedMcpArgs.length, 1);
     assert.match(result.expectedMcpArgs[0] ?? "", /dist[\/\\]server\.js$/);
     for (const arg of result.expectedMcpArgs) {
-      assert.match(codexToml, new RegExp(arg.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+      assert.equal(codexToml.includes(JSON.stringify(arg)), true);
     }
     assert.equal(result.expectedMcpStartupTimeoutSec, 90);
     assert.equal(result.mcpProbe.ok, true);
@@ -89,10 +152,15 @@ test("installCodexTokenPilot writes provider, MCP, and hooks with expected comma
     assert.equal(result.cliBinDir, cliBinDir);
     assert.equal(result.cliBinDirOnPath, false);
     assert.equal(result.hostCliBinPath, join(cliBinDir, "tokenpilot-codex"));
-    assert.equal((await lstat(result.cliBinPath)).isSymbolicLink(), true);
-    assert.match(await readlink(result.cliBinPath), /products[\/\\]cli[\/\\]dist[\/\\]cli\.js$/);
-    assert.equal((await lstat(result.hostCliBinPath!)).isSymbolicLink(), true);
-    assert.match(await readlink(result.hostCliBinPath!), /adapters[\/\\]codex[\/\\]dist[\/\\]cli\.js$/);
+    if (process.platform === "win32") {
+      assert.equal((await lstat(result.cliBinPath)).isFile(), true);
+      assert.equal((await lstat(result.hostCliBinPath!)).isFile(), true);
+    } else {
+      assert.equal((await lstat(result.cliBinPath)).isSymbolicLink(), true);
+      assert.match(await readlink(result.cliBinPath), /products[\/\\]cli[\/\\]dist[\/\\]cli\.js$/);
+      assert.equal((await lstat(result.hostCliBinPath!)).isSymbolicLink(), true);
+      assert.match(await readlink(result.hostCliBinPath!), /adapters[\/\\]codex[\/\\]dist[\/\\]cli\.js$/);
+    }
     const tokenPilotConfig = await loadTokenPilotCodexConfig(tokenPilotConfigPath);
     assert.equal(tokenPilotConfig.enabled, true);
     assert.equal(tokenPilotConfig.upstreamProvider, "OPENAI");
@@ -156,7 +224,9 @@ test("installCodexTokenPilot restores execute permission on the shared lightmem2
     });
 
     assert.equal(result.cliBinInstalled, true);
-    assert.equal(((await stat(cliDistPath)).mode & 0o111) !== 0, true);
+    if (process.platform !== "win32") {
+      assert.equal(((await stat(cliDistPath)).mode & 0o111) !== 0, true);
+    }
   } finally {
     await chmod(cliDistPath, originalMode).catch(() => undefined);
     await rm(dir, { recursive: true, force: true });
@@ -365,7 +435,7 @@ test("installCodexTokenPilot rewrites the MCP server block idempotently", async 
 test("installCodexTokenPilot shifts the proxy port when the preferred port is already occupied", async () => {
   const dir = await mkdtemp(join(tmpdir(), "lightmem2-codex-install-port-shift-"));
   const blocker = await new Promise<{ server: import("node:net").Server; port: number }>((resolve, reject) => {
-    const server = createServer();
+    const server = createServer((socket) => socket.destroy());
     server.once("error", reject);
     server.listen(0, "127.0.0.1", () => {
       const address = server.address();
@@ -415,6 +485,7 @@ test("installCodexTokenPilot shifts the proxy port when the preferred port is al
 
 test("installCodexTokenPilot stops an existing daemon before resolving the proxy port", async () => {
   const dir = await mkdtemp(join(tmpdir(), "lightmem2-codex-install-stop-daemon-"));
+  const daemonPort = await reserveUnusedPort();
   let dummy: ReturnType<typeof spawn> | undefined;
   try {
     const codexConfigPath = join(dir, "config.toml");
@@ -422,7 +493,7 @@ test("installCodexTokenPilot stops an existing daemon before resolving the proxy
     const tokenPilotConfigPath = join(dir, "tokenpilot.json");
     const stateDir = join(dir, "state");
     const config = normalizeTokenPilotCodexConfig({
-      proxyPort: 17680,
+      proxyPort: daemonPort,
       stateDir,
     });
     await writeTokenPilotCodexConfig(config, tokenPilotConfigPath);
@@ -442,7 +513,7 @@ test("installCodexTokenPilot stops an existing daemon before resolving the proxy
         "  res.writeHead(404);",
         "  res.end('not found');",
         "});",
-        "server.listen(17680, '127.0.0.1');",
+        `server.listen(${daemonPort}, '127.0.0.1');`,
         "setInterval(() => {}, 1000);",
       ].join(" "),
     ], {
@@ -469,8 +540,8 @@ test("installCodexTokenPilot stops an existing daemon before resolving the proxy
     });
 
     const persisted = await loadTokenPilotCodexConfig(tokenPilotConfigPath);
-    assert.equal(persisted.proxyPort, 17680);
-    assert.equal(result.baseUrl, "http://127.0.0.1:17680/v1");
+    assert.equal(persisted.proxyPort, daemonPort);
+    assert.equal(result.baseUrl, `http://127.0.0.1:${daemonPort}/v1`);
     assert.equal((await readDaemonStatus(persisted)).running, false);
   } finally {
     if (dummy?.pid) {
@@ -487,11 +558,20 @@ test("installCodexTokenPilot stops an existing daemon before resolving the proxy
 test("resolveCodexHookCommandForInstall finds the adapter root from the bundled CLI tree", async () => {
   const repoRoot = resolve(__dirname, "..", "..", "..", "..");
   const bundledCliModuleDir = join(repoRoot, "components", "products", "cli", "dist");
+  const adapterDistDir = join(repoRoot, "components", "adapters", "codex", "dist");
   const originalCwd = process.cwd();
   try {
     process.chdir(dirname(repoRoot));
-    const command = await resolveCodexHookCommandForInstall(process.platform, bundledCliModuleDir);
-    assert.match(command, /adapters[\/\\]codex[\/\\]dist[\/\\](hooks-handler\.js|tokenpilot-codex-hook\.cmd)/);
+    const windowsCommand = await resolveCodexHookCommandForInstall("win32", bundledCliModuleDir);
+    assert.deepEqual(parseGeneratedShellCommand(windowsCommand), [
+      join(adapterDistDir, "tokenpilot-codex-hook.cmd"),
+    ]);
+
+    const posixCommand = await resolveCodexHookCommandForInstall("linux", bundledCliModuleDir);
+    assert.deepEqual(parseGeneratedShellCommand(posixCommand), [
+      process.execPath,
+      join(adapterDistDir, "hooks-handler.js"),
+    ]);
   } finally {
     process.chdir(originalCwd);
   }

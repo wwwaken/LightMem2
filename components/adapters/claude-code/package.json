@@ -22,6 +22,7 @@
   "dependencies": {
     "@lightmem2/artifact-store": "workspace:*",
     "@lightmem2/tokenpilot": "workspace:*",
+    "@lightmem2/eviction": "workspace:*",
     "@lightmem2/host-adapter": "workspace:*",
     "@lightmem2/kernel": "workspace:*",
     "@lightmem2/mcp": "workspace:*",

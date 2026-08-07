@@ -1,0 +1,130 @@
+{
+  "fixtureKind": "synthetic-sanitized-encrypted-reasoning-replay",
+  "sessionId": "codex-session-reasoning-replay",
+  "model": "gpt-5.4-mini",
+  "encryptedContent": "enc_fixture_v1_AAECAwQFBgcICQoLDA0ODw",
+  "complete": {
+    "turns": [
+      {
+        "requestId": "request-reasoning-1",
+        "request": {
+          "model": "gpt-5.4-mini",
+          "stream": false,
+          "input": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "input_text",
+                  "text": "EVICT_ME_REASONING_FIXTURE inspect the synthetic record"
+                }
+              ]
+            }
+          ]
+        },
+        "response": {
+          "id": "resp-reasoning-1",
+          "status": "completed",
+          "output": [
+            {
+              "id": "rs-reasoning-fixture",
+              "type": "reasoning",
+              "encrypted_content": "enc_fixture_v1_AAECAwQFBgcICQoLDA0ODw",
+              "summary": [
+                {
+                  "type": "summary_text",
+                  "text": "Synthetic reasoning summary."
+                }
+              ],
+              "status": "completed"
+            },
+            {
+              "id": "fc-reasoning-fixture",
+              "type": "function_call",
+              "call_id": "call-reasoning-fixture",
+              "name": "lookup_fixture",
+              "arguments": "{\"key\":\"alpha\"}",
+              "status": "completed"
+            }
+          ]
+        }
+      },
+      {
+        "requestId": "request-reasoning-2",
+        "request": {
+          "model": "gpt-5.4-mini",
+          "stream": false,
+          "previous_response_id": "resp-reasoning-1",
+          "input": [
+            {
+              "type": "function_call_output",
+              "call_id": "call-reasoning-fixture",
+              "output": "{\"value\":\"KEEP_ME_TOOL_OUTPUT\"}"
+            }
+          ]
+        },
+        "response": {
+          "id": "resp-reasoning-2",
+          "previous_response_id": "resp-reasoning-1",
+          "status": "completed",
+          "output": [
+            {
+              "id": "msg-reasoning-fixture",
+              "type": "message",
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "output_text",
+                  "text": "KEEP_ME_ASSISTANT completed the synthetic lookup"
+                }
+              ],
+              "status": "completed"
+            }
+          ]
+        }
+      }
+    ],
+    "currentInput": [
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "input_text",
+            "text": "CURRENT_INPUT_REASONING_FIXTURE continue once"
+          }
+        ]
+      }
+    ]
+  },
+  "missingReasoning": {
+    "id": "rs-reasoning-missing",
+    "type": "reasoning",
+    "summary": [
+      {
+        "type": "summary_text",
+        "text": "Summary is not a substitute for encrypted content."
+      }
+    ],
+    "status": "completed"
+  },
+  "malformedReasoning": {
+    "id": "rs-reasoning-malformed",
+    "type": "reasoning",
+    "encrypted_content": "   ",
+    "summary": [],
+    "status": "completed"
+  },
+  "truncatedResponse": {
+    "id": "resp-reasoning-truncated",
+    "status": "incomplete",
+    "output": [
+      {
+        "id": "rs-reasoning-truncated",
+        "type": "reasoning",
+        "encrypted_content": "enc_fixture_v1_truncated_transport_record",
+        "summary": [],
+        "status": "incomplete"
+      }
+    ]
+  }
+}

@@ -280,6 +280,7 @@ export function createRestrictedHostCommandHandler(params: {
   loadConfig(): Promise<Record<string, unknown>>;
   formatStatus(currentConfig: Record<string, unknown>): string;
   applyMode(mode: "conservative" | "normal"): Promise<void>;
+  supportsEviction?: boolean;
 }): (ctx: { args: string; sessionId?: string }) => Promise<{ text: string }> {
   const sharedHandler = createProductSurfaceCommandHandler({
     bridge: params.bridge,
@@ -403,6 +404,21 @@ export function createRestrictedHostCommandHandler(params: {
     }
 
     if (action === "eviction") {
+      if (params.supportsEviction) {
+        const sub = args[1]?.toLowerCase() ?? "status";
+        if (
+          sub === "status"
+          || sub === "show"
+          || sub === "on"
+          || sub === "off"
+          || (sub === "set" && args[2] === "minBlockChars")
+        ) {
+          return sharedHandler(ctx);
+        }
+        return {
+          text: `${params.displayName} eviction supports only status, on|off, and set minBlockChars <number>.`,
+        };
+      }
       return { text: `${params.displayName} lifecycle eviction controls are not supported.` };
     }
 

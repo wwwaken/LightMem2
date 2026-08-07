@@ -23,6 +23,9 @@ importers:
       '@lightmem2/artifact-store':
         specifier: workspace:*
         version: link:../../packages/foundation/artifact-store
+      '@lightmem2/eviction':
+        specifier: workspace:*
+        version: link:../../packages/features/eviction
       '@lightmem2/host-adapter':
         specifier: workspace:*
         version: link:../../packages/foundation/host-adapter
@@ -146,6 +149,9 @@ importers:
       '@lightmem2/history':
         specifier: workspace:*
         version: link:../../foundation/history
+      '@lightmem2/host-adapter':
+        specifier: workspace:*
+        version: link:../../foundation/host-adapter
       '@lightmem2/kernel':
         specifier: workspace:*
         version: link:../../foundation/kernel

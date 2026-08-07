@@ -14,6 +14,7 @@
   "dependencies": {
     "@lightmem2/artifact-store": "workspace:*",
     "@lightmem2/history": "workspace:*",
+    "@lightmem2/host-adapter": "workspace:*",
     "@lightmem2/kernel": "workspace:*"
   }
 }

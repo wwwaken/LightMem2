@@ -61,12 +61,19 @@ async function terminateProcess(pid: number): Promise<void> {
   await waitForProcessExit(pid, 2_000).catch(() => undefined);
 }
 
-async function isProxyHealthy(config: TokenPilotCodexConfig): Promise<boolean> {
+async function isProxyHealthy(config: TokenPilotCodexConfig, timeoutMs = 500): Promise<boolean> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  timeout.unref?.();
   try {
-    const resp = await fetch(`http://127.0.0.1:${config.proxyPort}/health`);
+    const resp = await fetch(`http://127.0.0.1:${config.proxyPort}/health`, {
+      signal: controller.signal,
+    });
     return resp.ok;
   } catch {
     return false;
+  } finally {
+    clearTimeout(timeout);
   }
 }
 

@@ -40,9 +40,8 @@ export default defineConfig({
         items: [
           { text: 'Plugin Development', link: '/plugin-development/build-your-first-plugin' },
           { text: 'Host Adapter Development', link: '/host-adapter-development/adapter-architecture' },
-          { text: 'Plugin Registry', link: '/plugin-registry/official-plugins' },
           { text: 'Development', link: '/development/repository-structure' },
-          { text: 'Project', link: '/project/roadmap' },
+          { text: 'Project', link: '/project/changelog' },
           { text: 'GitHub', link: 'https://github.com/zjunlp/LightMem2' },
           { text: 'Paper', link: 'https://arxiv.org/abs/2606.17016' },
         ],
@@ -114,11 +113,9 @@ export default defineConfig({
           text: 'User Guide',
           items: [
             { text: 'Managing Plugins', link: '/user-guide/managing-plugins' },
-            { text: 'Enabling and Disabling Plugins', link: '/user-guide/enabling-disabling' },
             { text: 'Plugin Configuration', link: '/user-guide/plugin-configuration' },
             { text: 'Sessions', link: '/user-guide/sessions' },
             { text: 'CLI Reference', link: '/user-guide/cli-reference' },
-            { text: 'Visual Inspector', link: '/user-guide/visual-inspector' },
             { text: 'Logs and Diagnostics', link: '/user-guide/logs-and-diagnostics' },
             { text: 'Uninstall and Rollback', link: '/user-guide/uninstall-and-rollback' },
           ],
@@ -155,18 +152,6 @@ export default defineConfig({
           ],
         },
       ],
-      '/plugin-registry/': [
-        {
-          text: 'Plugin Registry',
-          items: [
-            { text: 'Official Plugins', link: '/plugin-registry/official-plugins' },
-            { text: 'Community Plugins', link: '/plugin-registry/community-plugins' },
-            { text: 'Submission Requirements', link: '/plugin-registry/submission-requirements' },
-            { text: 'Compatibility Policy', link: '/plugin-registry/compatibility-policy' },
-            { text: 'Security Review', link: '/plugin-registry/security-review' },
-          ],
-        },
-      ],
       '/development/': [
         {
           text: 'Development',
@@ -182,7 +167,6 @@ export default defineConfig({
         {
           text: 'Project',
           items: [
-            { text: 'Roadmap', link: '/project/roadmap' },
             { text: 'Changelog', link: '/project/changelog' },
             { text: 'Security', link: '/project/security' },
             { text: 'Citation', link: '/project/citation' },

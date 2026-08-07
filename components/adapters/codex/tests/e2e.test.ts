@@ -203,7 +203,19 @@ test("Codex host e2e wires install, proxy reduction, report/visual, and MCP reco
       },
     });
 
-    const { handleCommand } = createCodexCliBridge({ host: "codex" });
+    const { handleCommand } = createCodexCliBridge({
+      host: "codex",
+      async handleVisualCommand(selection) {
+        const visualSessions = await readVisualSessionList(stateDir);
+        const sessionId = selection.sessionId ?? visualSessions[0]?.sessionId ?? "";
+        return {
+          text: [
+            `LightMem2 visual: http://127.0.0.1:43111/?host=${selection.host ?? "codex"}&session=${sessionId}`,
+            `- Codex: ${visualSessions.length} session snapshots`,
+          ].join("\n"),
+        };
+      },
+    });
 
     await assertProductSurfaceSmoke({
       run(args) {
@@ -1181,7 +1193,14 @@ test("Codex CLI report and visual return clear empty-state messages before any r
       tokenPilotConfigPath,
     );
 
-    const { handleCommand } = createCodexCliBridge({ host: "codex" });
+    const { handleCommand } = createCodexCliBridge({
+      host: "codex",
+      async handleVisualCommand(selection) {
+        return {
+          text: `LightMem2 visual: http://127.0.0.1:43111/?host=${selection.host ?? "codex"}`,
+        };
+      },
+    });
 
     const report = await handleCommand({ args: "report" });
     assert.equal(report.text, "No TokenPilot session stats yet.");

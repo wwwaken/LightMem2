@@ -1,0 +1,12 @@
+{
+  "messageId": "fixture-canonical",
+  "role": "user",
+  "content": "completed canonical task input",
+  "details": {
+    "contextSafe": {
+      "taskIds": [
+        "task-completed"
+      ]
+    }
+  }
+}

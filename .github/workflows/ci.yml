@@ -44,8 +44,14 @@ jobs:
       - name: Test OpenClaw adapter
         run: pnpm --dir components/adapters/openclaw test
 
+      - name: Test Claude Code adapter
+        run: pnpm --dir components/adapters/claude-code test
+
       - name: Test host adapter package
         run: pnpm --dir components/packages/foundation/host-adapter test
+
+      - name: Test history package
+        run: pnpm --dir components/packages/foundation/history test
 
       - name: Test TokenPilot preset
         run: pnpm --dir components/presets/tokenpilot test

@@ -1,0 +1,21 @@
+{
+  "messageId": "fixture-tool-call",
+  "role": "assistant",
+  "content": [
+    {
+      "type": "toolCall",
+      "id": "call-fixture-1",
+      "name": "read_fixture",
+      "arguments": {
+        "path": "fixture.txt"
+      }
+    }
+  ],
+  "details": {
+    "contextSafe": {
+      "taskIds": [
+        "task-completed"
+      ]
+    }
+  }
+}

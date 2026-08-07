@@ -16,6 +16,7 @@ export type CodexRequestJournalEntry = {
   previousResponseId?: string;
   promptCacheKey?: string;
   inputItems: JsonObject[];
+  committedInputItems?: JsonObject[];
   status: CodexJournalStatus;
   error?: string;
   observedAt: string;
@@ -33,7 +34,7 @@ export type CodexResponseJournalEntry = {
   requestId?: string;
   sessionId: string;
   responseId?: string;
-  previousResponseId?: string;
+  previousResponseId?: string | null;
   stream: boolean;
   outputItems: JsonObject[];
   outputItemRefs: CodexResponseOutputRef[];
@@ -62,7 +63,7 @@ export type CodexEffectiveHistory = {
   observationOnlyItems: CodexEffectiveHistoryItem[];
   deferredItems: CodexEffectiveHistoryItem[];
   unresolvedCallIds: string[];
-  source: "proxy_journal" | "rollout_bootstrap" | "empty";
+  source: "proxy_journal" | "rollout_bootstrap" | "rollout_proxy_merge" | "empty";
   incomplete: boolean;
 };
 

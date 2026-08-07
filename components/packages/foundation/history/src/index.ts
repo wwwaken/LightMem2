@@ -1,5 +1,7 @@
 export * from "./types.js";
 export * from "./page-out-types.js";
+export * from "./context-item-id.js";
+export * from "./context-revision.js";
 export * from "./canonical-state.js";
 export * from "./canonical-anchors.js";
 export * from "./canonical-rewrite.js";

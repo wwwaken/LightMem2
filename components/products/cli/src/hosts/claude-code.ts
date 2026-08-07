@@ -94,6 +94,8 @@ function formatClaudeCodeStatus(currentConfig: Record<string, unknown>): string 
     `- reduction: ${formatOnOff(getNestedValue(currentConfig, ["modules", "reduction"]))}`,
     `- triggerMinChars: ${formatDisplayValue(getNestedValue(currentConfig, ["reduction", "triggerMinChars"]))}`,
     `- maxToolChars: ${formatDisplayValue(getNestedValue(currentConfig, ["reduction", "maxToolChars"]))}`,
+    `- eviction: ${formatOnOff(Boolean(getNestedValue(currentConfig, ["modules", "eviction"])) && Boolean(getNestedValue(currentConfig, ["eviction", "enabled"])))}`,
+    `- evictionMinBlockChars: ${formatDisplayValue(getNestedValue(currentConfig, ["eviction", "minBlockChars"]))}`,
     `- proxyPort: ${formatDisplayValue(currentConfig.proxyPort)}`,
     `- upstreamBaseUrl: ${formatDisplayValue(currentConfig.upstreamBaseUrl)}`,
   ].join("\n");
@@ -165,6 +167,7 @@ export function createClaudeCodeCliBridge(target: {
     displayName: "Claude Code",
     cliHostName: "claude-code",
     reductionPassNames: CLAUDE_REDUCTION_PASS_NAMES,
+    supportsEviction: true,
     bridge,
     configAdapter: claudeCodeProductSurfaceConfigAdapter,
     loadConfig() {

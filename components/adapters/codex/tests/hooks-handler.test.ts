@@ -30,6 +30,8 @@ test("processCodexHookEvent records hook snapshot metadata without overriding th
     await processCodexHookEvent({
       hook_event_name: "PostToolUse",
       session_id: "019f-real-codex-session",
+      transcript_path: "/tmp/codex-rollout.jsonl",
+      model: "gpt-5.6-sol",
       cwd: "/repo/from-hook",
       tool_name: "read",
       tool_input: "file.ts",
@@ -45,11 +47,17 @@ test("processCodexHookEvent records hook snapshot metadata without overriding th
       "utf8",
     );
     const hookSnapshot = JSON.parse(hookSnapshotRaw) as {
+      codexSessionId?: string;
+      latestModel?: string;
       workspaceHint?: string;
+      transcriptPath?: string;
       lastHookEvent?: string;
       lastToolName?: string;
     };
+    assert.equal(hookSnapshot.codexSessionId, "019f-real-codex-session");
+    assert.equal(hookSnapshot.latestModel, "gpt-5.6-sol");
     assert.equal(hookSnapshot.workspaceHint, "/repo/from-hook");
+    assert.equal(hookSnapshot.transcriptPath, "/tmp/codex-rollout.jsonl");
     assert.equal(hookSnapshot.lastHookEvent, "PostToolUse");
     assert.equal(hookSnapshot.lastToolName, "read");
   } finally {

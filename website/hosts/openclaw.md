@@ -2,10 +2,6 @@
 
 OpenClaw is the primary host for LightMem2, with the deepest integration via a native plugin slot.
 
-::: info Test Environment
-**OS**: macOS 14 / Linux (Ubuntu 22.04) &nbsp;|&nbsp; **Node**: v20+ &nbsp;|&nbsp; **Last verified**: 2026-07-16
-:::
-
 ## Installation
 
 ```bash
@@ -102,31 +98,14 @@ lightmem2 openclaw session <session-id> report
 
 ## Model Selection
 
-Use models with the `lightmem2/` prefix:
-
 ```text
 lightmem2/gpt-5.4-mini
 ```
 
-This routes through TokenPilot's context management pipeline.
-
-## Useful Controls
-
-- `mode aggressive` — maximum savings
-- `eviction on|off` — lifecycle-aware context eviction
-- `settings details on` — expanded status output
-- `stabilizer ...` and `reduction ...` — fine-tune stabilization and reduction
-
-## Failure Recovery
-
-If the install fails or you need to roll back:
+## Recovery
 
 ```bash
-# Restore original config
 cp ~/.openclaw/openclaw.json.tokenpilot.bak ~/.openclaw/openclaw.json
-
-# Restart OpenClaw
-# (use your normal restart method)
 ```
 
 ## Troubleshooting

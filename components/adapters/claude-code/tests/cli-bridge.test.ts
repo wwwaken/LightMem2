@@ -53,8 +53,26 @@ test("claude-code cli bridge exposes only the supported Claude Code command surf
     const unsupportedSettings = await handleCommand({ args: "settings details on" });
     assert.equal(unsupportedSettings.text, "Claude Code does not expose shared runtime settings yet.");
 
-    const unsupportedEviction = await handleCommand({ args: "eviction on" });
-    assert.equal(unsupportedEviction.text, "Claude Code lifecycle eviction controls are not supported.");
+    const eviction = await handleCommand({ args: "eviction on" });
+    assert.equal(eviction.text, "✅ Lifecycle-Aware Eviction enabled");
+    const configuredEviction = await loadTokenPilotClaudeCodeConfig(
+      defaultTokenPilotClaudeCodeConfigPath(),
+    );
+    assert.equal(configuredEviction.modules.eviction, true);
+    assert.equal(configuredEviction.eviction.enabled, true);
+
+    const evictionFloor = await handleCommand({ args: "eviction set minBlockChars 512" });
+    assert.equal(evictionFloor.text, "✅ eviction.minBlockChars = 512");
+    const configuredFloor = await loadTokenPilotClaudeCodeConfig(
+      defaultTokenPilotClaudeCodeConfigPath(),
+    );
+    assert.equal(configuredFloor.eviction.minBlockChars, 512);
+
+    const unsupportedEstimator = await handleCommand({ args: "eviction estimator on" });
+    assert.equal(
+      unsupportedEstimator.text,
+      "Claude Code eviction supports only status, on|off, and set minBlockChars <number>.",
+    );
 
     const aggressiveMode = await handleCommand({ args: "mode aggressive" });
     assert.equal(aggressiveMode.text, "Claude Code does not support lifecycle eviction mode. Use `mode normal` or `mode conservative`.");
@@ -307,10 +325,13 @@ test("claude-code mode writes only claude-supported fields", async () => {
 
     const record = reloaded as unknown as Record<string, unknown>;
     assert.equal("taskStateEstimator" in record, false);
-    assert.equal("eviction" in record, false);
+    assert.equal("eviction" in record, true);
+    assert.equal((record.eviction as Record<string, unknown>).enabled, false);
+    assert.equal((record.eviction as Record<string, unknown>).failureMode, "bypass");
     const modules = record.modules as Record<string, unknown>;
     assert.equal("policy" in modules, false);
-    assert.equal("eviction" in modules, false);
+    assert.equal("eviction" in modules, true);
+    assert.equal(reloaded.modules.eviction, false);
   } finally {
     if (originalHome === undefined) {
       delete process.env.HOME;

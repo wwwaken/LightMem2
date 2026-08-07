@@ -297,6 +297,72 @@ test("CDH-04 Effective History Builder delegates to rollout parser bootstrap whe
   });
 });
 
+test("CDH-04 Effective History Builder merges rollout bootstrap with post-baseline proxy journal", async () => {
+  await withTempState(async (stateDir) => {
+    await appendCodexRequestJournalEntry({
+      stateDir,
+      sessionId: "codex-session-rollout-merge",
+      requestId: "request-after-rollout",
+      payload: {
+        previous_response_id: "resp-rollout-baseline",
+        input: [{ role: "user", content: "proxy journal after rollout baseline" }],
+      },
+      status: "completed",
+    });
+    await appendCodexResponseJournalEntry({
+      stateDir,
+      sessionId: "codex-session-rollout-merge",
+      requestId: "request-after-rollout",
+      response: {
+        id: "resp-proxy-head",
+        previous_response_id: "resp-rollout-baseline",
+        output: [
+          {
+            id: "msg-after-rollout",
+            type: "message",
+            role: "assistant",
+            content: [{ type: "output_text", text: "proxy journal answer" }],
+          },
+        ],
+      },
+      status: "completed",
+    });
+
+    const history = await buildCodexEffectiveHistory({
+      stateDir,
+      sessionId: "codex-session-rollout-merge",
+      headResponseId: "resp-proxy-head",
+      async rolloutParserBootstrap() {
+        return {
+          revision: "rollout-rev-merge",
+          replayableItems: [
+            {
+              stableItemId: "rollout-baseline-user",
+              nativeId: "rollout-baseline-user",
+              item: { role: "user", content: "rollout compacted baseline" },
+            },
+          ],
+          observationOnlyItems: [],
+          deferredItems: [],
+          unresolvedCallIds: [],
+          source: "rollout_bootstrap",
+          incomplete: false,
+        };
+      },
+    });
+
+    assert.equal(history.source, "rollout_proxy_merge");
+    assert.equal(history.incomplete, false);
+    assert.deepEqual(
+      history.replayableItems.map((entry) => entry.item.type ?? entry.item.role),
+      ["user", "user", "message"],
+    );
+    assert.match(JSON.stringify(history.replayableItems), /rollout compacted baseline/);
+    assert.match(JSON.stringify(history.replayableItems), /proxy journal after rollout baseline/);
+    assert.match(JSON.stringify(history.replayableItems), /proxy journal answer/);
+  });
+});
+
 test("CDH-04 Effective History Builder marks malformed SSE journals incomplete without dropping valid items", async () => {
   await withTempState(async (stateDir) => {
     await appendCodexRequestJournalEntry({

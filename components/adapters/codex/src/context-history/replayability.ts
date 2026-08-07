@@ -5,6 +5,7 @@ export type CodexReplayabilityMode = "replayable" | "observation_only" | "deferr
 export type CodexReplayabilityReason =
   | "default_replayable"
   | "tool_closure_required"
+  | "tool_call_id_missing"
   | "exact_payload_required"
   | "exact_payload_missing"
   | "provider_observation"
@@ -31,10 +32,12 @@ export function codexReplayabilityForItem(item: JsonObject): CodexItemReplayabil
     || type === "function_call_output"
     || type === "custom_tool_call_output"
   ) {
-    return { mode: "replayable", reason: "tool_closure_required" };
+    return typeof item.call_id === "string" && item.call_id.trim().length > 0
+      ? { mode: "replayable", reason: "tool_closure_required" }
+      : { mode: "deferred", reason: "tool_call_id_missing" };
   }
-  if (type === "reasoning") {
-    return typeof item.encrypted_content === "string" && item.encrypted_content.length > 0
+  if (type === "reasoning" || type === "compaction") {
+    return typeof item.encrypted_content === "string" && item.encrypted_content.trim().length > 0
       ? { mode: "replayable", reason: "exact_payload_required" }
       : { mode: "deferred", reason: "exact_payload_missing" };
   }

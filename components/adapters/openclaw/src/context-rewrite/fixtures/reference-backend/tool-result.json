@@ -1,0 +1,19 @@
+{
+  "messageId": "fixture-tool-result",
+  "role": "toolResult",
+  "toolCallId": "call-fixture-1",
+  "toolName": "read_fixture",
+  "content": [
+    {
+      "type": "text",
+      "text": "fixture contents"
+    }
+  ],
+  "details": {
+    "contextSafe": {
+      "taskIds": [
+        "task-completed"
+      ]
+    }
+  }
+}

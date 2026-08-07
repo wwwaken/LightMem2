@@ -223,8 +223,17 @@ async function canListenOnPort(port: number): Promise<boolean> {
   });
 }
 
-async function resolveAvailableCodexProxyPort(preferredPort: number): Promise<number> {
-  if (await canListenOnPort(preferredPort)) return preferredPort;
+async function resolveAvailableCodexProxyPort(
+  preferredPort: number,
+  params?: { waitForPreferredMs?: number },
+): Promise<number> {
+  const waitForPreferredMs = params?.waitForPreferredMs ?? 0;
+  const deadline = Date.now() + waitForPreferredMs;
+  do {
+    if (await canListenOnPort(preferredPort)) return preferredPort;
+    if (Date.now() >= deadline) break;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  } while (true);
   for (let port = preferredPort + 1; port <= preferredPort + 20; port += 1) {
     if (await canListenOnPort(port)) return port;
   }
@@ -391,8 +400,10 @@ export async function installCodexTokenPilot(params?: {
   const tokenPilotConfig = await loadTokenPilotCodexConfig(tokenPilotConfigPath);
   const previousProxyPort = tokenPilotConfig.proxyPort;
   const commandSkillsDir = defaultCodexSkillBridgeDir(dirname(codexConfigPath));
-  await stopDaemon(tokenPilotConfig).catch(() => undefined);
-  tokenPilotConfig.proxyPort = await resolveAvailableCodexProxyPort(tokenPilotConfig.proxyPort);
+  const stoppedDaemon = await stopDaemon(tokenPilotConfig).catch(() => undefined);
+  tokenPilotConfig.proxyPort = await resolveAvailableCodexProxyPort(tokenPilotConfig.proxyPort, {
+    waitForPreferredMs: stoppedDaemon?.stopped ? 1_000 : 0,
+  });
   const existingRootProvider = await readCodexRootModelProvider(codexConfigPath);
   const persistedProviderName = tokenPilotConfig.providerName !== "tokenpilot"
     ? tokenPilotConfig.providerName

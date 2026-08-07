@@ -137,6 +137,88 @@ Once installed, Codex can use the real internal recovery tool named
 `memory_fault_recover` through the registered MCP server. Recovery hints in
 trimmed payloads are no longer just protocol text.
 
+### Offline context-rebase smoke
+
+The response-chain rebase path has a credential-free smoke command for local
+development and CI:
+
+```bash
+npm --prefix components/adapters/codex run smoke:context-rebase:codex -- \
+  --mode=mock \
+  --output-dir=/path/to/sanitized-evidence
+```
+
+It starts a temporary loopback Responses upstream and verifies encrypted
+reasoning replay, function call/output closure, sentinel eviction and
+retention, five turns on the new response chain, proxy restart, one-attempt
+fallback with cooldown, all eight stabilizer/reduction/rewrite combinations,
+and estimated rebase accounting including the break-even turn.
+
+The command never reads an API key. Its evidence is explicitly marked
+`mode: mock` and omits raw prompts, headers, response IDs, and encrypted
+reasoning payloads. It does not replace real-provider validation or
+provider-observed usage and break-even evidence.
+
+### Opt-in provider context-rebase smoke
+
+The same command exposes a separate, explicit provider mode:
+
+```bash
+npm --prefix components/adapters/codex run smoke:context-rebase:codex -- \
+  --mode=provider \
+  --model=gpt-5.4-mini \
+  --output-dir=/path/to/sanitized-evidence
+```
+
+Provider mode reads `OPENAI_API_KEY` and `OPENAI_BASE_URL` from the process
+environment or `<initial cwd>/.env`; `--credentials-file` can select another
+ignored env file. There is no CLI argument for the key. The mode first verifies
+exact encrypted-reasoning and function-call/output replay, then compares a
+control chain with a five-turn rebase chain and restarts the proxy before turn
+three. It writes a v2 artifact only if the Responses endpoint, capability v2
+journal, rebase commit ordering, sentinel checks, exact payload digest, tool
+closure, response links, restart mapping, and provider usage gates all pass.
+
+Evidence contains only safe endpoint/model labels, an endpoint digest,
+booleans, counts, item types, payload length/digest, and provider usage totals.
+It never contains the API key, raw prompts, response IDs, encrypted payloads,
+headers, or raw provider error bodies. Authentication and schema failures are
+not retried; only 429 and 5xx receive two bounded retries. A provider that can
+return encrypted reasoning but rejects `previous_response_id` is recorded as a
+partial compatibility result and must not be described as a successful
+response-chain rebase.
+
+Context-history journal writers use a session-scoped cross-process lock. A
+successful append is one complete JSONL record followed by `sync`; concurrent
+request and response writers cannot interleave their records. If a crash leaves
+one unterminated JSON/UTF-8 suffix after an otherwise canonical journal, the
+next append or effective-history restart read truncates only that suffix under
+the same lock and syncs the file. A complete canonical final record that only
+lacks its newline is preserved and normalized. Invalid canonical records,
+middle corruption, and read/write uncertainty still fail closed so the proxy
+bypasses rewriting instead of guessing history. Recovery evidence exposes only
+a reason, byte count, and SHA-256 digest, never the discarded bytes. This is
+crash-truncated tail recovery, not power-loss-level transactional append
+semantics.
+
+Provider replay compatibility is evaluated separately from structural
+replayability. A complete tool closure or exact encrypted payload only makes an
+item a replay candidate; it does not prove that the selected provider and model
+accept that item. Capability journal v2 keys observations by provider, model,
+Responses wire/API mode, a SHA-256 endpoint identity, item type, and item schema
+version, and expires observations after a bounded TTL.
+
+The default `contextRewrite.providerCompatibilityProbe` value is `disabled`.
+With that default, unknown, expired, verified-unsupported, payload-rejected, or
+untrusted capability state bypasses rebase before an epoch is opened and sends
+the original request. `mock_fixture` and `real_provider` are explicit probe
+modes. Mock evidence can drive mock tests but is never presented as real-provider
+verification. Explicit item-schema rejection is scoped to the named item type;
+encrypted-content lineage/expiry rejection is scoped to the exact payload
+digest; authentication, rate-limit, server, network, and ambiguous multi-item
+failures do not poison the capability cache. Doctor and session reports label
+the evidence source and whether each observation is active or expired.
+
 If install finishes in degraded MCP mode, Codex stable-prefix and reduction remain usable; only the real `memory_fault_recover` tool path is unavailable until MCP startup succeeds.
 
 If doctor still reports `proxy healthy: no` after hooks are trusted and a new session has started, use the daemon fallback:
@@ -263,6 +345,12 @@ Primary package scripts:
 npm --prefix components/adapters/codex run build
 npm --prefix components/adapters/codex run typecheck
 npm --prefix components/adapters/codex test
+npm --prefix components/adapters/codex run smoke:context-rebase:codex -- --mode=mock
 npm --prefix components/adapters/codex run install:codex
 npm --prefix components/adapters/codex run doctor:codex
+npm --prefix components/adapters/codex run pack:release
 ```
+
+`pack:release` is the Linux/CI Bash path. On Windows, build the Codex adapter,
+shared CLI, and MCP packages first, then use `pack:release:portable`; it creates
+the same minimal archive through a temporary directory without requiring WSL.

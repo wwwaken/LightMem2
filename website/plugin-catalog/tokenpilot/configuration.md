@@ -14,11 +14,11 @@ TokenPilot settings control how aggressively it manages context. All settings ha
 
 Each mode is a preset that configures stabilizer, reduction, and eviction behavior:
 
-| Mode | Stabilizer | Reduction | Eviction | Best For |
-| :-- | :-- | :-- | :-- | :-- |
-| `conservative` | On (developer target) | Light | Off | Safety-critical sessions |
-| `normal` | On (developer target) | Balanced | On | General use |
-| `aggressive` | On (user target) | Strong | On (earlier threshold) | Maximum savings |
+| Mode | Stabilizer | Reduction | Eviction |
+| :-- | :-- | :-- | :-- |
+| `conservative` | On (developer target) | Light | Off |
+| `normal` | On (developer target) | Balanced | Off |
+| `aggressive` | On (user target) | Strong | On (earlier threshold) |
 
 See [Runtime Modes](/plugin-catalog/tokenpilot/runtime-modes) for detailed behavior.
 
@@ -41,7 +41,7 @@ See [Runtime Modes](/plugin-catalog/tokenpilot/runtime-modes) for detailed behav
 
 | Setting | Values | Default | Description |
 | :-- | :-- | :-- | :-- |
-| `eviction.enabled` | `true`, `false` | `true` (normal mode) | Enable context eviction |
+| `eviction.enabled` | `true`, `false` | `false` (off by default) | Enable context eviction |
 | `eviction.threshold` | Token count | Mode-dependent | When to start evicting |
 
 ## Changing Settings
@@ -57,30 +57,6 @@ lightmem2 stabilizer off
 lightmem2 reduction mode light
 lightmem2 eviction on
 ```
-
-### Via Config File
-
-Edit the plugin config file directly (format depends on host):
-
-```json
-{
-  "enabled": true,
-  "mode": "normal",
-  "stabilizer": {
-    "enabled": true,
-    "target": "developer"
-  },
-  "reduction": {
-    "enabled": true,
-    "mode": "balanced"
-  },
-  "eviction": {
-    "enabled": true
-  }
-}
-```
-
-Changes take effect on the next turn (no restart needed).
 
 ## Next
 

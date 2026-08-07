@@ -58,7 +58,7 @@ lightmem2 codex report
 lightmem2 codex doctor
 lightmem2 codex visual
 lightmem2 codex session <id> report
-lightmem2 codex mode <conservative|normal|aggressive>
+lightmem2 codex mode <conservative|normal>
 lightmem2 codex stabilizer <on|off>
 lightmem2 codex stabilizer target <developer|user>
 lightmem2 codex reduction <on|off>
@@ -83,7 +83,7 @@ lightmem2 claude-code report
 lightmem2 claude-code doctor
 lightmem2 claude-code visual
 lightmem2 claude-code session <id> report
-lightmem2 claude-code mode <conservative|normal|aggressive>
+lightmem2 claude-code mode <conservative|normal>
 lightmem2 claude-code stabilizer <on|off>
 lightmem2 claude-code stabilizer target <developer|user>
 lightmem2 claude-code reduction <on|off>
@@ -93,111 +93,7 @@ lightmem2 claude-code reduction status
 lightmem2 claude-code help
 ```
 
-## Command Reference
-
-### `status`
-
-Shows plugin state, mode, and subsystem status.
-
-```bash
-lightmem2 <host> status
-```
-
-**Example output:**
-```text
-plugin entry:  enabled
-config:        enabled
-mode:          normal
-stabilizer:    enabled
-reduction:     enabled
-eviction:      enabled
-```
-
-### `doctor`
-
-Full integration self-check. Tests config, proxy health, hook registration.
-
-```bash
-lightmem2 <host> doctor
-```
-
-**Example output:**
-```text
-plugin entry enabled:   yes
-config enabled:          yes
-mode:                    normal
-stabilizer enabled:      yes
-reduction enabled:       yes
-proxy healthy:           yes
-config file readable:    yes
-backup files present:    yes
-```
-
-### `report`
-
-Session token, cache, and cost summary.
-
-```bash
-lightmem2 <host> report
-lightmem2 <host> session <id> report
-```
-
-**Example output:**
-```text
-Session: abc123   Turns: 12   Mode: normal
-Input tokens:     45,230    Cache read: 38,100 (84.2%)
-Cache miss:       7,130     Output:     3,420
-Est. cost:        $0.12
-```
-
-### `visual`
-
-Opens the browser-based visual inspector.
-
-```bash
-lightmem2 visual
-lightmem2 <host> visual
-```
-
-### `mode`
-
-Switches runtime mode preset.
-
-```bash
-lightmem2 <host> mode conservative
-lightmem2 <host> mode normal
-lightmem2 <host> mode aggressive
-```
-
-### `stabilizer`
-
-Controls stable-prefix rewriting.
-
-```bash
-lightmem2 <host> stabilizer <on|off>
-lightmem2 <host> stabilizer target <developer|user>
-```
-
-### `reduction`
-
-Controls context reduction.
-
-```bash
-lightmem2 <host> reduction <on|off>
-lightmem2 <host> reduction mode <light|balanced>
-lightmem2 <host> reduction pass toolPayloadTrim <on|off>
-lightmem2 <host> reduction status
-```
-
-### `eviction`
-
-Controls lifecycle-aware context eviction.
-
-```bash
-lightmem2 <host> eviction <on|off>
-```
-
 ## Next
 
-- [Visual Inspector](/user-guide/visual-inspector) — using the browser dashboard
+- [Reports and Visuals](/plugin-catalog/tokenpilot/reports-and-visuals) — using the browser dashboard
 - [Logs and Diagnostics](/user-guide/logs-and-diagnostics) — finding and reading logs

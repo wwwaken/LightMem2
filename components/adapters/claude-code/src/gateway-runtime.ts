@@ -12,6 +12,10 @@ import {
   sendJsonResponse,
   startHostGatewayRuntimeServer,
   setForwardResponseHeaders,
+  loadActiveContextMutationPlans,
+  saveActiveContextMutationPlan,
+  markContextMutationPlanApplied,
+  markContextMutationPlanFailed,
 } from "@lightmem2/host-adapter";
 import {
   prepareObservedBeforeCall,
@@ -21,7 +25,20 @@ import type { TokenPilotClaudeCodeConfig } from "./config.js";
 import { proxyBaseUrlForPort } from "./config.js";
 import type { TokenPilotClaudeCodeLogger } from "./logger.js";
 import { createClaudeMessagesPayloadCodec } from "./messages-codec.js";
+import { encodeRequestOrBypass } from "./context-rewrite/encode-bypass.js";
 import { reduceClaudeRequestEnvelope, type ClaudeReductionSummary } from "./reduction.js";
+import {
+  applyClaudeEviction,
+  analyzeClaudeEviction,
+  buildToolResultSegments,
+  type ClaudeEvictionApplySummary,
+} from "./eviction.js";
+import { claudeContextRewriteBackend, relocateContextMutationPlan } from "./context-rewrite/backend.js";
+import { applyArchivePlan } from "./context-rewrite/archive.js";
+import { saveLatestClaudeSnapshot } from "./context-rewrite/snapshot-store.js";
+import { appendOverlayHistory } from "./context-rewrite/overlay-history.js";
+import { buildContextMutationPlan } from "@lightmem2/eviction";
+import { createHash as _createHash } from "node:crypto";
 import {
   appendClaudeCodeRecentTurnBinding,
   upsertClaudeCodeSessionSnapshot,
@@ -36,11 +53,16 @@ import { createClaudeCodeGatewayForwarder, resolveClaudeCodeUpstream } from "./u
 import { appendClaudeCodeCacheAuditRecord, buildClaudeCodeCacheAuditSnapshot } from "./cache-audit.js";
 import { buildAnthropicGatewayModelList, mapClaudeVisibleModelToUpstreamModel } from "./provider-profile.js";
 import { resolveLatestClaudeCodeSessionId } from "./session-state.js";
+import { lookupRealSessionId, recordSessionMapping } from "./context-rewrite/session-map.js";
 import { initializeClaudeCodeTokenPilotPreset } from "./preset.js";
 
 export type ClaudeCodeGatewayRuntime = {
   baseUrl: string;
   close(): Promise<void>;
+};
+
+type ClaudeCodeGatewayRuntimeDependencies = {
+  cloneRequestPayload?: typeof structuredClone;
 };
 
 function isSyntheticClaudeSessionId(sessionId: string): boolean {
@@ -51,8 +73,15 @@ async function resolveObservedClaudeSessionId(stateDir: string, sessionId: strin
   if (!isSyntheticClaudeSessionId(sessionId)) {
     return sessionId;
   }
+  // Persisted synth->real binding takes priority so the overlay keeps a stable
+  // anchor across requests and restarts, even if the "latest" session changes.
+  const persisted = await lookupRealSessionId(stateDir, sessionId);
+  if (persisted) {
+    return persisted;
+  }
   const latestSessionId = await resolveLatestClaudeCodeSessionId(stateDir);
   if (latestSessionId && !isSyntheticClaudeSessionId(latestSessionId)) {
+    await recordSessionMapping(stateDir, sessionId, latestSessionId);
     return latestSessionId;
   }
   return sessionId;
@@ -153,6 +182,7 @@ async function recordClaudeGatewayTurn(params: {
   responseChars: number;
   assistantChars: number;
   reductionSavedChars: number;
+  evictionSavedChars: number;
   stablePrefixApplied: boolean;
   reductionApplied: boolean;
   stream: boolean;
@@ -169,6 +199,7 @@ async function recordClaudeGatewayTurn(params: {
     responseChars: params.responseChars,
     assistantChars: params.assistantChars,
     reductionSavedChars: params.reductionSavedChars,
+    evictionSavedChars: params.evictionSavedChars,
   });
   await appendClaudeCodeRecentTurnBinding(params.stateDir, {
     sessionId: params.sessionId,
@@ -179,6 +210,7 @@ async function recordClaudeGatewayTurn(params: {
     responseChars: params.responseChars,
     assistantChars: params.assistantChars,
     reductionSavedChars: params.reductionSavedChars,
+    evictionSavedChars: params.evictionSavedChars,
     stablePrefixApplied: params.stablePrefixApplied,
     reductionApplied: params.reductionApplied,
     stream: params.stream,
@@ -191,6 +223,7 @@ export async function startClaudeCodeGatewayRuntime(params: {
   logger: TokenPilotClaudeCodeLogger;
   forwarder?: HostGatewayForwarder;
   streamObserver?: HostGatewayStreamObserver;
+  dependencies?: ClaudeCodeGatewayRuntimeDependencies;
 }): Promise<ClaudeCodeGatewayRuntime> {
   initializeClaudeCodeTokenPilotPreset();
   const { config, logger } = params;
@@ -294,6 +327,186 @@ export async function startClaudeCodeGatewayRuntime(params: {
       const originalRequestText = typeof envelope.metadata?.inputText === "string"
         ? envelope.metadata.inputText
         : "";
+      const sessionId = await resolveObservedClaudeSessionId(config.stateDir, envelope.session.sessionId);
+      const evictionEnabled = config.modules.eviction && config.eviction.enabled;
+      let evictionSummary: ClaudeEvictionApplySummary = {
+        enabled: evictionEnabled,
+        changed: false,
+        evictedMessageCount: 0,
+        evictedToolResultCount: 0,
+        savedChars: 0,
+        evictedBlockIds: [],
+      };
+      let evictionBypassReason: string | undefined;
+      let activePlanId: string | undefined;
+      let activePlanStatus: "active" | "applied" | undefined;
+      if (evictionEnabled) {
+        try {
+          const candidatePayload = (
+            params.dependencies?.cloneRequestPayload ?? structuredClone
+          )(payload) as { messages?: unknown[] };
+          const overlayMessages =
+            (candidatePayload.messages ?? []) as typeof envelope.messages;
+          const revision = _createHash("sha256")
+            .update(JSON.stringify(overlayMessages))
+            .digest("hex")
+            .slice(0, 32);
+
+          const analysis = analyzeClaudeEviction({
+            sessionId,
+            model: envelope.model,
+            messages: overlayMessages,
+            config: { enabled: true, minBlockChars: config.eviction.minBlockChars },
+          });
+
+          if (analysis.changed && analysis.selections.length > 0) {
+            const { bindings } = buildToolResultSegments(overlayMessages);
+            const segmentLocations = new Map(
+              [...bindings.entries()].map(([segmentId, binding]) => [
+                segmentId,
+                { messageIndex: binding.messageIndex, blockIndex: binding.blockIndex },
+              ]),
+            );
+
+            const overlayRequest = { sessionId, revision, messages: overlayMessages };
+            const snapshot = await claudeContextRewriteBackend.readSnapshot({
+              sessionId,
+              request: overlayRequest,
+            });
+            // Persist the latest complete snapshot (+ item fingerprints) for this
+            // session so the overlay has a durable, restart-surviving view of the
+            // current turn (§4.5 claude-context). Fail-open, never blocks the request.
+            await saveLatestClaudeSnapshot(config.stateDir, sessionId, snapshot);
+            const loaded = await loadActiveContextMutationPlans({
+              stateDir: config.stateDir,
+              sessionId,
+            });
+            // Relocate any active plan onto the CURRENT snapshot: a later turn
+            // may have shifted item positions (new stableIds + revision) while
+            // the underlying content is unchanged, so an exact-revision match
+            // would miss it. relocate re-anchors operations by fingerprint and
+            // defers anything ambiguous or gone.
+            let plan: ReturnType<typeof buildContextMutationPlan> | undefined;
+            let replayedFromStore = false;
+            for (const candidate of loaded.plans) {
+              const { plan: relocatedPlan, relocated } = relocateContextMutationPlan({
+                snapshot,
+                plan: candidate,
+              });
+              if (relocated) {
+                // Re-persist the relocated plan so its stored form tracks the
+                // current revision (supervisor-confirmed behavior).
+                await saveActiveContextMutationPlan({
+                  stateDir: config.stateDir,
+                  plan: relocatedPlan,
+                });
+                plan = relocatedPlan;
+                replayedFromStore = true;
+                break;
+              }
+            }
+            if (!replayedFromStore) {
+            if (loaded.bypassed) {
+              throw new Error(`context mutation plan store unavailable: ${loaded.reasons.join(",")}`);
+            }
+            const persistedPlan = loaded.plans.find(
+              (candidate) => candidate.baseRevision === snapshot.revision,
+            );
+            let plan;
+            if (persistedPlan) {
+              plan = persistedPlan;
+              activePlanStatus = "active";
+            } else {
+              plan = buildContextMutationPlan({
+                hostId: "claude-code",
+                sessionId,
+                snapshot,
+                selections: analysis.selections.map((selection) => ({
+                  segmentIds: selection.segmentIds,
+                  chars: selection.chars,
+                })),
+                segmentLocations,
+              });
+              const stored = await saveActiveContextMutationPlan({
+                stateDir: config.stateDir,
+                plan,
+              });
+              if (stored.bypassed || (stored.status !== "active" && stored.status !== "applied")) {
+                throw new Error(`context mutation plan could not be persisted: ${stored.reasons.join(",")}`);
+              }
+              activePlanStatus = stored.status;
+            }
+            if (!plan) {
+              throw new Error("context mutation plan unavailable");
+            }
+            // Archive stage (before apply): each tool_result the plan would evict
+            // is archived first. On success we record the opaque archiveRef on the
+            // op so apply writes a recovery_ref into the stub. On failure we drop
+            // that item from the op targets so apply will NOT stub it — the
+            // original stays in the forwarded request. Never stub without a
+            // successful archive, or the content is deleted unrecoverably.
+            await applyArchivePlan({
+              stateDir: config.stateDir,
+              sessionId,
+              snapshot,
+              plan,
+              request: overlayRequest,
+            });
+            activePlanId = plan.planId;
+            const { request: rewritten, result } = await claudeContextRewriteBackend.apply({
+              snapshot,
+              plan,
+              request: overlayRequest,
+            });
+            if (result.changed && activePlanStatus === "active") {
+              const applied = await markContextMutationPlanApplied({
+                stateDir: config.stateDir,
+                sessionId,
+                planId: plan.planId,
+              });
+              // Record this turn's overlay in the append-only audit log (§4.5).
+              await appendOverlayHistory(config.stateDir, {
+                sessionId,
+                planId: plan.planId,
+                previousRevision: result.previousRevision,
+                nextRevision: result.nextRevision,
+                removedItemIds: result.removedItemIds,
+                savedChars: result.savedChars,
+                relocated: replayedFromStore,
+              });
+              if (applied.bypassed) {
+                throw new Error(`context mutation plan commit failed: ${applied.reasons.join(",")}`);
+              }
+            }
+
+            evictionSummary = {
+              ...evictionSummary,
+              changed: result.changed,
+              savedChars: result.savedChars,
+              evictedBlockIds: result.removedItemIds,
+              evictedToolResultCount: result.removedItemIds.length,
+              evictedMessageCount: result.removedItemIds.length,
+            };
+
+            if (result.changed) {
+              payload = { ...(payload as Record<string, unknown>), messages: rewritten.messages };
+              envelope = codec.decodeRequest(payload, {
+                headers: req.headers as Record<string, string | string[] | undefined>,
+              });
+            }
+          }
+        } catch {
+          evictionBypassReason = "analysis_or_apply_error";
+          logger.warn("context eviction bypassed category=analysis_or_apply_error");
+          if (activePlanId && activePlanStatus === "active") {
+            await markContextMutationPlanFailed({
+              stateDir: config.stateDir,
+              sessionId,
+              planId: activePlanId,
+            }).catch(() => undefined);
+          }
+        }
+      }
       if (envelope.model.startsWith("tokenpilot/")) {
         envelope = {
           ...envelope,
@@ -305,7 +518,6 @@ export async function startClaudeCodeGatewayRuntime(params: {
         model: mapClaudeVisibleModelToUpstreamModel(config, envelope.model),
       };
       const authorization = typeof req.headers.authorization === "string" ? req.headers.authorization : undefined;
-      const sessionId = await resolveObservedClaudeSessionId(config.stateDir, envelope.session.sessionId);
       const model = envelope.model;
       const workspaceHint = extractWorkspaceHint(envelope);
       const prepared = await prepareObservedBeforeCall<ClaudeReductionSummary>({
@@ -369,7 +581,14 @@ export async function startClaudeCodeGatewayRuntime(params: {
         },
       });
       const reductionSummary = prepared.reductionSummary;
-      payload = codec.encodeRequest(prepared.envelope);
+      {
+        const encoded = encodeRequestOrBypass({ codec, envelope: prepared.envelope, rawBody: body });
+        payload = encoded.payload as Record<string, unknown>;
+        if (encoded.bypassed) {
+          evictionBypassReason = "encode_error";
+          logger.warn("context overlay bypassed category=encode_error");
+        }
+      }
       const reducedRequestText = typeof prepared.envelope.metadata?.inputText === "string"
         ? prepared.envelope.metadata.inputText
         : "";
@@ -403,6 +622,12 @@ export async function startClaudeCodeGatewayRuntime(params: {
         reductionChangedMessages: reductionSummary?.changedMessages ?? 0,
         reductionSkippedReason: reductionSummary?.skippedReason ?? null,
         reductionPassEffects: reductionSummary?.passEffects ?? [],
+        evictionEnabled: evictionSummary.enabled,
+        evictionApplied: evictionSummary.changed,
+        evictionSavedChars: evictionSummary.savedChars,
+        evictionChangedMessages: evictionSummary.evictedMessageCount,
+        evictionChangedToolResults: evictionSummary.evictedToolResultCount,
+        evictionBypassReason: evictionBypassReason ?? null,
       });
 
       if (prepared.envelope.stream) {
@@ -460,6 +685,7 @@ export async function startClaudeCodeGatewayRuntime(params: {
             responseChars: rawStreamText.length,
             assistantChars: snapshot.assistantText.length,
             reductionSavedChars: reductionSummary?.savedChars ?? 0,
+            evictionSavedChars: evictionSummary?.savedChars ?? 0,
             stablePrefixApplied: prepared.diagnostics.stablePrefixApplied === true,
             reductionApplied: prepared.diagnostics.reductionApplied === true,
             stream: true,
@@ -543,6 +769,7 @@ export async function startClaudeCodeGatewayRuntime(params: {
         responseChars: upstreamResp.text.length,
         assistantChars,
         reductionSavedChars: reductionSummary?.savedChars ?? 0,
+        evictionSavedChars: evictionSummary?.savedChars ?? 0,
         stablePrefixApplied: prepared.diagnostics.stablePrefixApplied === true,
         reductionApplied: prepared.diagnostics.reductionApplied === true,
         stream: false,

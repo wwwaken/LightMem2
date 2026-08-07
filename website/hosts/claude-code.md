@@ -2,15 +2,11 @@
 
 Claude Code integration uses a **local gateway + MCP** pattern. TokenPilot runs as a local Anthropic-compatible gateway that Claude Code routes through.
 
-::: info Test Environment
-**OS**: macOS 14 / Linux (Ubuntu 22.04) &nbsp;|&nbsp; **Node**: v20+ &nbsp;|&nbsp; **Last verified**: 2026-07-16
-:::
-
 ## Installation
 
 ```bash
-npm --prefix components/adapters/claude-code run build
-npm --prefix components/adapters/claude-code run install:claude-code
+npm --prefix components/tokenpilot/adapters/claude-code run build
+npm --prefix components/tokenpilot/adapters/claude-code run install:claude-code
 ```
 
 This command:
@@ -26,8 +22,8 @@ This command:
 export CLAUDE_CODE_SETTINGS_PATH="/path/to/settings.json"
 export CLAUDE_CODE_MCP_CONFIG_PATH="/path/to/.claude.json"
 export TOKENPILOT_CLAUDE_CODE_CONFIG="/path/to/tokenpilot.json"
-npm --prefix components/adapters/claude-code run build
-npm --prefix components/adapters/claude-code run install:claude-code
+npm --prefix components/tokenpilot/adapters/claude-code run build
+npm --prefix components/tokenpilot/adapters/claude-code run install:claude-code
 ```
 
 ## Expected Output
@@ -87,16 +83,6 @@ lightmem2 claude-code reduction mode balanced
 lightmem2 claude-code help
 ```
 
-## Useful Controls
-
-| Command | Effect |
-| :-- | :-- |
-| `stabilizer on\|off` | Toggle stable-prefix rewriting |
-| `stabilizer target <developer\|user>` | Choose where dynamic context is attached |
-| `reduction on\|off` | Toggle observation reduction |
-| `reduction mode <light\|balanced>` | Switch between lighter and stronger trimming |
-| `reduction pass toolPayloadTrim off` | Disable one specific reduction pass |
-
 ## PATH Setup
 
 If `lightmem2` is not found after install:
@@ -106,15 +92,6 @@ export PATH="$HOME/.local/bin:$PATH"
 ```
 
 Add to `~/.bashrc` or `~/.zshrc` to make permanent.
-
-## Failure Recovery
-
-```bash
-# Restore original configs
-cp ~/.claude/settings.json.tokenpilot.bak ~/.claude/settings.json
-cp ~/.claude/.claude.json.tokenpilot.bak ~/.claude/.claude.json
-rm ~/.claude/tokenpilot.json
-```
 
 ## Troubleshooting
 

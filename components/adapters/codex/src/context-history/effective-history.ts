@@ -1,4 +1,4 @@
-import { readCodexContextHistoryJournal } from "./journal-store.js";
+import { readCodexContextHistoryJournalRecoveringTail } from "./journal-append.js";
 import { codexReplayabilityForItem } from "./replayability.js";
 import { cloneJson, hashJson } from "./shared.js";
 import type {
@@ -63,7 +63,16 @@ function committedResponses(
 }
 
 function previousResponseId(turn: CommittedTurn): string | undefined {
-  return turn.response.entry.previousResponseId ?? turn.request.entry.previousResponseId;
+  if ("previousResponseId" in turn.response.entry) {
+    return typeof turn.response.entry.previousResponseId === "string"
+      ? turn.response.entry.previousResponseId
+      : undefined;
+  }
+  return turn.request.entry.previousResponseId;
+}
+
+function committedInputItems(turn: CommittedTurn): JsonObject[] {
+  return turn.request.entry.committedInputItems ?? turn.request.entry.inputItems;
 }
 
 function buildCommittedChain(params: {
@@ -101,7 +110,7 @@ function buildCommittedChain(params: {
     const previousId = previousResponseId(turn);
     if (!previousId) break;
     cursor = params.responses.get(previousId);
-    if (!cursor) return { chain: [], complete: false };
+    if (!cursor) return { chain, complete: false };
   }
   return { chain, complete: true };
 }
@@ -205,6 +214,128 @@ function hasMalformedStreamEvents(chain: CommittedTurn[]): boolean {
   return chain.some((turn) => (turn.response.entry.malformedEventCount ?? 0) > 0);
 }
 
+function effectiveItemKeys(entry: CodexEffectiveHistoryItem): string[] {
+  const type = typeof entry.item.type === "string"
+    ? entry.item.type
+    : typeof entry.item.role === "string"
+      ? `message:${entry.item.role}`
+      : "item";
+  const keys = [`stable:${entry.stableItemId}`];
+  if (entry.nativeId) keys.push(`native:${entry.nativeId}`);
+  if (typeof entry.item.id === "string") keys.push(`item:${type}:${entry.item.id}`);
+  if (entry.callId) keys.push(`call:${type}:${entry.callId}`);
+  return keys;
+}
+
+function appendMergedEffectiveItems(params: {
+  target: CodexEffectiveHistoryItem[];
+  entries: CodexEffectiveHistoryItem[];
+  seen: Set<string>;
+}): void {
+  for (const entry of params.entries) {
+    const keys = effectiveItemKeys(entry);
+    if (keys.some((key) => params.seen.has(key))) continue;
+    keys.forEach((key) => params.seen.add(key));
+    params.target.push({
+      ...entry,
+      item: cloneJson(entry.item),
+    });
+  }
+}
+
+function historyRevision(params: {
+  replayableItems: CodexEffectiveHistoryItem[];
+  observationOnlyItems: CodexEffectiveHistoryItem[];
+  deferredItems: CodexEffectiveHistoryItem[];
+  unresolved: string[];
+  incomplete: boolean;
+}): string {
+  return `rev-${hashJson({
+    replayableItems: params.replayableItems.map((entry) => ({
+      stableItemId: entry.stableItemId,
+      fingerprint: hashJson(entry.item),
+    })),
+    observationOnlyItems: params.observationOnlyItems.map((entry) => ({
+      stableItemId: entry.stableItemId,
+      fingerprint: hashJson(entry.item),
+    })),
+    deferredItems: params.deferredItems.map((entry) => ({
+      stableItemId: entry.stableItemId,
+      fingerprint: hashJson(entry.item),
+    })),
+    unresolved: params.unresolved,
+    incomplete: params.incomplete,
+  })}`;
+}
+
+function mergeRolloutBootstrapWithProxyJournal(params: {
+  bootstrapped: CodexEffectiveHistory;
+  proxyReplayableItems: CodexEffectiveHistoryItem[];
+  proxyObservationOnlyItems: CodexEffectiveHistoryItem[];
+  proxyDeferredItems: CodexEffectiveHistoryItem[];
+  proxyIncomplete: boolean;
+}): CodexEffectiveHistory {
+  const seen = new Set<string>();
+  const replayableItems: CodexEffectiveHistoryItem[] = [];
+  const observationOnlyItems: CodexEffectiveHistoryItem[] = [];
+  const deferredItems: CodexEffectiveHistoryItem[] = [];
+  appendMergedEffectiveItems({
+    target: replayableItems,
+    entries: params.bootstrapped.replayableItems,
+    seen,
+  });
+  appendMergedEffectiveItems({
+    target: observationOnlyItems,
+    entries: params.bootstrapped.observationOnlyItems,
+    seen,
+  });
+  appendMergedEffectiveItems({
+    target: deferredItems,
+    entries: params.bootstrapped.deferredItems,
+    seen,
+  });
+  appendMergedEffectiveItems({
+    target: replayableItems,
+    entries: params.proxyReplayableItems,
+    seen,
+  });
+  appendMergedEffectiveItems({
+    target: observationOnlyItems,
+    entries: params.proxyObservationOnlyItems,
+    seen,
+  });
+  appendMergedEffectiveItems({
+    target: deferredItems,
+    entries: params.proxyDeferredItems,
+    seen,
+  });
+  const unresolved = Array.from(new Set([
+    ...params.bootstrapped.unresolvedCallIds,
+    ...unresolvedCallIds(replayableItems),
+  ])).sort();
+  const incomplete = Boolean(
+    params.bootstrapped.incomplete
+    || params.proxyIncomplete
+    || deferredItems.length > 0
+    || unresolved.length > 0
+  );
+  return {
+    revision: historyRevision({
+      replayableItems,
+      observationOnlyItems,
+      deferredItems,
+      unresolved,
+      incomplete,
+    }),
+    replayableItems,
+    observationOnlyItems,
+    deferredItems,
+    unresolvedCallIds: unresolved,
+    source: "rollout_proxy_merge",
+    incomplete,
+  };
+}
+
 export async function buildCodexEffectiveHistory(params: {
   stateDir: string;
   sessionId: string;
@@ -212,7 +343,7 @@ export async function buildCodexEffectiveHistory(params: {
   currentRequestId?: string;
   rolloutParserBootstrap?: () => Promise<CodexEffectiveHistory | null>;
 }): Promise<CodexEffectiveHistory> {
-  const journalRead = await readCodexContextHistoryJournal(params.stateDir, params.sessionId);
+  const journalRead = await readCodexContextHistoryJournalRecoveringTail(params.stateDir, params.sessionId);
   const requests = latestRequests(journalRead.entries);
   const responses = latestResponsesById(journalRead.entries);
   const committedChain = buildCommittedChain({
@@ -220,37 +351,41 @@ export async function buildCodexEffectiveHistory(params: {
     requests,
     responses,
   });
+  const malformedStreams = hasMalformedStreamEvents(committedChain.chain);
+  const emptyChainWithJournal = Boolean(
+    committedChain.chain.length === 0
+    && journalRead.entries.some((entry) => (
+      entry.status !== "failed"
+      && !(entry.kind === "request" && entry.requestId === params.currentRequestId)
+    ))
+  );
+  const uncommittedActiveWork = hasUncommittedActiveWork({
+    chain: committedChain.chain,
+    currentRequestId: params.currentRequestId,
+    explicitHead: params.headResponseId !== undefined,
+    requests,
+  });
+  const uncommittedResponseWork = hasUncommittedResponseWork({
+    chain: committedChain.chain,
+    explicitHead: params.headResponseId !== undefined,
+    journal: journalRead.entries,
+    requests,
+  });
   const journalIncomplete = Boolean(
     journalRead.readError
     || journalRead.malformedLineCount > 0
-    || hasMalformedStreamEvents(committedChain.chain)
+    || malformedStreams
     || !committedChain.complete
-    || (
-      committedChain.chain.length === 0
-      && journalRead.entries.some((entry) => (
-        entry.status !== "failed"
-        && !(entry.kind === "request" && entry.requestId === params.currentRequestId)
-      ))
-    )
-    || hasUncommittedActiveWork({
-      chain: committedChain.chain,
-      currentRequestId: params.currentRequestId,
-      explicitHead: params.headResponseId !== undefined,
-      requests,
-    })
-    || hasUncommittedResponseWork({
-      chain: committedChain.chain,
-      explicitHead: params.headResponseId !== undefined,
-      journal: journalRead.entries,
-      requests,
-    }),
+    || emptyChainWithJournal
+    || uncommittedActiveWork
+    || uncommittedResponseWork,
   );
   const replayableItems: CodexEffectiveHistoryItem[] = [];
   const observationOnlyItems: CodexEffectiveHistoryItem[] = [];
   const deferredItems: CodexEffectiveHistoryItem[] = [];
   const seen = new Set<string>();
   for (const turn of committedChain.chain) {
-    turn.request.entry.inputItems.forEach((item, itemOrdinal) => {
+    committedInputItems(turn).forEach((item, itemOrdinal) => {
       appendEffectiveItem({
         item,
         sessionId: params.sessionId,
@@ -282,24 +417,31 @@ export async function buildCodexEffectiveHistory(params: {
   const effectiveIncomplete = journalIncomplete || deferredItems.length > 0 || unresolved.length > 0;
   if ((journalRead.entries.length === 0 || effectiveIncomplete) && params.rolloutParserBootstrap) {
     const bootstrapped = await params.rolloutParserBootstrap();
-    if (bootstrapped) return bootstrapped;
+    if (bootstrapped) {
+      if (committedChain.chain.length === 0) return bootstrapped;
+      return mergeRolloutBootstrapWithProxyJournal({
+        bootstrapped,
+        proxyReplayableItems: replayableItems,
+        proxyObservationOnlyItems: observationOnlyItems,
+        proxyDeferredItems: deferredItems,
+        proxyIncomplete: Boolean(
+          journalRead.readError
+          || journalRead.malformedLineCount > 0
+          || malformedStreams
+          || emptyChainWithJournal
+          || uncommittedActiveWork
+          || uncommittedResponseWork
+        ),
+      });
+    }
   }
-  const revision = `rev-${hashJson({
-    replayableItems: replayableItems.map((entry) => ({
-      stableItemId: entry.stableItemId,
-      fingerprint: hashJson(entry.item),
-    })),
-    observationOnlyItems: observationOnlyItems.map((entry) => ({
-      stableItemId: entry.stableItemId,
-      fingerprint: hashJson(entry.item),
-    })),
-    deferredItems: deferredItems.map((entry) => ({
-      stableItemId: entry.stableItemId,
-      fingerprint: hashJson(entry.item),
-    })),
+  const revision = historyRevision({
+    replayableItems,
+    observationOnlyItems,
+    deferredItems,
     unresolved,
     incomplete: effectiveIncomplete,
-  })}`;
+  });
 
   return {
     revision,

@@ -223,6 +223,128 @@ test("CDH-03 SSE Item Collector aggregates reasoning and custom tool delta event
   assert.equal(customCall.input, "payload");
 });
 
+test("CDH-03 SSE Item Collector handles a mixed upstream stream fixture", () => {
+  const result = collectCodexResponseItemsFromStream(sseStream(
+    sseBlock("response.created", {
+      type: "response.created",
+      response: { id: "resp-realistic-stream", previous_response_id: "resp-prev-realistic" },
+    }),
+    sseBlock("response.output_item.added", {
+      type: "response.output_item.added",
+      output_index: 0,
+      item: { id: "msg-realistic", type: "message", role: "assistant", content: [] },
+    }),
+    sseBlock("response.content_part.added", {
+      type: "response.content_part.added",
+      item_id: "msg-realistic",
+      output_index: 0,
+      content_index: 0,
+      part: { type: "output_text", text: "" },
+    }),
+    sseBlock("response.output_text.delta", {
+      type: "response.output_text.delta",
+      item_id: "msg-realistic",
+      output_index: 0,
+      content_index: 0,
+      delta: "I'll check ",
+    }),
+    sseBlock("response.output_text.delta", {
+      type: "response.output_text.delta",
+      item_id: "msg-realistic",
+      output_index: 0,
+      content_index: 0,
+      delta: "the state.",
+    }),
+    sseBlock("response.output_item.added", {
+      type: "response.output_item.added",
+      output_index: 1,
+      item: { id: "reason-realistic", type: "reasoning", encrypted_content: "encrypted-1", summary: [] },
+    }),
+    sseBlock("response.reasoning_summary_part.added", {
+      type: "response.reasoning_summary_part.added",
+      item_id: "reason-realistic",
+      output_index: 1,
+      summary_index: 0,
+      part: { type: "summary_text", text: "" },
+    }),
+    sseBlock("response.reasoning_summary_text.delta", {
+      type: "response.reasoning_summary_text.delta",
+      item_id: "reason-realistic",
+      output_index: 1,
+      summary_index: 0,
+      delta: "Need a safe rebase.",
+    }),
+    sseBlock("response.output_item.added", {
+      type: "response.output_item.added",
+      output_index: 2,
+      item: {
+        id: "function-realistic",
+        type: "function_call",
+        call_id: "call-realistic",
+        name: "read_file",
+        arguments: "",
+      },
+    }),
+    sseBlock("response.function_call_arguments.delta", {
+      type: "response.function_call_arguments.delta",
+      item_id: "function-realistic",
+      output_index: 2,
+      delta: "{\"path\":\"context.ts\"",
+    }),
+    sseBlock("response.function_call_arguments.done", {
+      type: "response.function_call_arguments.done",
+      item_id: "function-realistic",
+      output_index: 2,
+      arguments: "{\"path\":\"context.ts\"}",
+    }),
+    sseBlock("response.output_item.added", {
+      type: "response.output_item.added",
+      output_index: 3,
+      item: {
+        id: "custom-realistic",
+        type: "custom_tool_call",
+        call_id: "custom-realistic",
+        name: "patch",
+        input: "",
+      },
+    }),
+    sseBlock("response.custom_tool_call_input.delta", {
+      type: "response.custom_tool_call_input.delta",
+      item_id: "custom-realistic",
+      output_index: 3,
+      delta: "diff --git",
+    }),
+    sseBlock("response.custom_tool_call_input.done", {
+      type: "response.custom_tool_call_input.done",
+      item_id: "custom-realistic",
+      output_index: 3,
+      input: "diff --git",
+    }),
+    sseBlock("response.completed", {
+      type: "response.completed",
+      response: { id: "resp-realistic-stream", previous_response_id: "resp-prev-realistic" },
+    }),
+    sseBlock(undefined, "[DONE]"),
+  ));
+
+  const message = asObject(result.outputItems[0]);
+  const reasoning = asObject(result.outputItems[1]);
+  const functionCall = asObject(result.outputItems[2]);
+  const customCall = asObject(result.outputItems[3]);
+
+  assert.equal(result.status, "completed");
+  assert.equal(result.responseId, "resp-realistic-stream");
+  assert.equal(result.previousResponseId, "resp-prev-realistic");
+  assert.equal(result.outputItems.length, 4);
+  assert.equal(outputText(message), "I'll check the state.");
+  assert.equal(asObject(reasoning.summary[0]).text, "Need a safe rebase.");
+  assert.equal(reasoning.encrypted_content, "encrypted-1");
+  assert.equal(functionCall.arguments, "{\"path\":\"context.ts\"}");
+  assert.equal(customCall.input, "diff --git");
+  assert.equal(result.malformedEventCount, 0);
+  assert.equal(result.eventTypeCounts["response.output_item.added"], 4);
+});
+
 test("CDH-03 SSE Item Collector preserves accumulated fields across empty item updates", () => {
   const result = collectCodexResponseItemsFromStream(sseStream(
     sseBlock("response.output_item.added", {
@@ -246,6 +368,109 @@ test("CDH-03 SSE Item Collector preserves accumulated fields across empty item u
   ));
 
   assert.equal(outputText(asObject(result.outputItems[0])), "partial");
+});
+
+test("CDH-03 SSE Item Collector preserves accumulated deltas across empty done events", () => {
+  const result = collectCodexResponseItemsFromStream(sseStream(
+    sseBlock("response.output_item.added", {
+      output_index: 0,
+      item: { id: "msg-1", type: "message", role: "assistant", content: [] },
+    }),
+    sseBlock("response.output_text.delta", {
+      item_id: "msg-1",
+      output_index: 0,
+      delta: "partial",
+    }),
+    sseBlock("response.output_text.done", {
+      item_id: "msg-1",
+      output_index: 0,
+      text: "",
+    }),
+    sseBlock("response.output_item.added", {
+      output_index: 1,
+      item: {
+        id: "fc-1",
+        type: "function_call",
+        call_id: "call-1",
+        name: "read",
+        arguments: "",
+      },
+    }),
+    sseBlock("response.function_call_arguments.delta", {
+      item_id: "fc-1",
+      output_index: 1,
+      delta: "{\"path\":\"a\"}",
+    }),
+    sseBlock("response.function_call_arguments.done", {
+      item_id: "fc-1",
+      output_index: 1,
+      arguments: "",
+    }),
+    sseBlock("response.output_item.added", {
+      output_index: 2,
+      item: {
+        id: "cc-1",
+        type: "custom_tool_call",
+        call_id: "custom-1",
+        name: "patch",
+        input: "",
+      },
+    }),
+    sseBlock("response.custom_tool_call_input.delta", {
+      item_id: "cc-1",
+      output_index: 2,
+      delta: "diff",
+    }),
+    sseBlock("response.custom_tool_call_input.done", {
+      item_id: "cc-1",
+      output_index: 2,
+      input: "",
+    }),
+    sseBlock("response.output_item.added", {
+      output_index: 3,
+      item: { id: "msg-2", type: "message", role: "assistant", content: [] },
+    }),
+    sseBlock("response.output_text.delta", {
+      item_id: "msg-2",
+      output_index: 3,
+      content_index: 0,
+      delta: "content-part",
+    }),
+    sseBlock("response.content_part.done", {
+      item_id: "msg-2",
+      output_index: 3,
+      content_index: 0,
+      part: { type: "output_text", text: "" },
+    }),
+    sseBlock("response.output_item.added", {
+      output_index: 4,
+      item: { id: "rs-1", type: "reasoning", summary: [] },
+    }),
+    sseBlock("response.reasoning_summary_text.delta", {
+      item_id: "rs-1",
+      output_index: 4,
+      summary_index: 0,
+      delta: "summary",
+    }),
+    sseBlock("response.reasoning_summary_text.done", {
+      item_id: "rs-1",
+      output_index: 4,
+      summary_index: 0,
+      text: "",
+    }),
+    sseBlock("response.reasoning_summary_part.done", {
+      item_id: "rs-1",
+      output_index: 4,
+      summary_index: 0,
+      part: { type: "summary_text", text: "" },
+    }),
+  ));
+
+  assert.equal(outputText(asObject(result.outputItems[0])), "partial");
+  assert.equal(asObject(result.outputItems[1]).arguments, "{\"path\":\"a\"}");
+  assert.equal(asObject(result.outputItems[2]).input, "diff");
+  assert.equal(outputText(asObject(result.outputItems[3])), "content-part");
+  assert.equal(asObject(asObject(result.outputItems[4]).summary[0]).text, "summary");
 });
 
 test("CDH-03 SSE Item Collector preserves encrypted reasoning across empty item updates", () => {

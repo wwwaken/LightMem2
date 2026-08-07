@@ -33,6 +33,10 @@ test("normalizeTokenPilotClaudeCodeConfig enables stabilizer and reduction defau
   const config = normalizeTokenPilotClaudeCodeConfig({});
   assert.equal(config.modules.stabilizer, true);
   assert.equal(config.modules.reduction, true);
+  assert.equal(config.modules.eviction, false);
+  assert.equal(config.eviction.enabled, false);
+  assert.equal(config.eviction.minBlockChars, 4000);
+  assert.equal(config.eviction.failureMode, "bypass");
   assert.equal(config.reduction.triggerMinChars, 2200);
   assert.equal(config.reduction.maxToolChars, 1200);
   assert.equal(config.reduction.passes.readStateCompaction, true);
@@ -40,4 +44,15 @@ test("normalizeTokenPilotClaudeCodeConfig enables stabilizer and reduction defau
   assert.equal(config.reduction.passes.htmlSlimming, true);
   assert.equal(config.reduction.passes.execOutputTruncation, true);
   assert.equal(config.reduction.passes.agentsStartupOptimization, true);
+});
+
+test("normalizeTokenPilotClaudeCodeConfig preserves and clamps eviction settings", () => {
+  const config = normalizeTokenPilotClaudeCodeConfig({
+    modules: { eviction: true },
+    eviction: { enabled: true, minBlockChars: 10, failureMode: "fail_closed" },
+  });
+  assert.equal(config.modules.eviction, true);
+  assert.equal(config.eviction.enabled, true);
+  assert.equal(config.eviction.minBlockChars, 256);
+  assert.equal(config.eviction.failureMode, "bypass");
 });

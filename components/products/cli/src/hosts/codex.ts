@@ -120,6 +120,10 @@ export function createCodexCliBridge(target: {
   host: "codex";
   sessionId?: string;
   pathOverrides?: CliHostPathOverrides;
+  handleVisualCommand?(params: {
+    host?: string;
+    sessionId?: string;
+  }): Promise<{ text: string }>;
 }): {
   bridge: ProductSurfaceHostBridge;
   configAdapter: ProductSurfaceConfigAdapter;
@@ -156,7 +160,7 @@ export function createCodexCliBridge(target: {
         currentConfig,
         explicitSessionId: target.sessionId,
       });
-      return handleStandaloneVisualCommandWithSelection({
+      return (target.handleVisualCommand ?? handleStandaloneVisualCommandWithSelection)({
         host: "codex",
         sessionId,
       });

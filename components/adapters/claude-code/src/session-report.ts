@@ -33,6 +33,8 @@ export type ClaudeCodeSessionTopology = {
   responseChars?: number;
   assistantChars?: number;
   reductionSavedChars?: number;
+  evictionSavedChars?: number;
+  evictionSavedCharsCumulative?: number;
   updatedAt?: string;
   turnCount: number;
 };
@@ -73,6 +75,11 @@ export async function resolveClaudeCodeSessionTopology(
       responseChars: value?.responseChars ?? latestBinding?.responseChars,
       assistantChars: value?.assistantChars ?? latestBinding?.assistantChars,
       reductionSavedChars: value?.reductionSavedChars ?? latestBinding?.reductionSavedChars,
+      evictionSavedChars: value?.evictionSavedChars ?? latestBinding?.evictionSavedChars,
+      evictionSavedCharsCumulative: bindings.reduce(
+        (total, b) => total + (typeof b?.evictionSavedChars === "number" ? b.evictionSavedChars : 0),
+        0,
+      ),
     }),
   });
 }
@@ -86,6 +93,8 @@ export async function renderClaudeCodeSessionReport(stateDir: string, sessionRef
     { label: "Latest response chars", value: topology.responseChars ?? 0 },
     { label: "Latest assistant chars", value: topology.assistantChars ?? 0 },
     { label: "Latest reduction savings", value: topology.reductionSavedChars ?? 0 },
+    { label: "Latest eviction savings", value: topology.evictionSavedChars ?? 0 },
+    { label: "Cumulative eviction savings", value: topology.evictionSavedCharsCumulative ?? 0 },
   ]);
 
   if (topology.lastToolName) {

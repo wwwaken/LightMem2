@@ -1,4 +1,4 @@
-import { chmod, mkdir, symlink, unlink } from "node:fs/promises";
+import { chmod, link, mkdir, symlink, unlink } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import type { CliHostId } from "../../products/cli/src/hosts/registry.js";
 
@@ -10,6 +10,18 @@ function hostCliBinName(host: CliHostId): string {
   if (host === "codex") return "tokenpilot-codex";
   if (host === "claude-code") return "tokenpilot-claude-code";
   throw new Error(`unsupported host CLI bin install: ${host}`);
+}
+
+async function createCliLink(targetPath: string, binPath: string): Promise<void> {
+  try {
+    await symlink(targetPath, binPath);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException)?.code;
+    if (process.platform !== "win32" || !["EACCES", "EPERM", "UNKNOWN"].includes(code ?? "")) {
+      throw error;
+    }
+    await link(targetPath, binPath);
+  }
 }
 
 export async function installHostCliBin(params: {
@@ -29,7 +41,7 @@ export async function installHostCliBin(params: {
   await mkdir(dirname(binPath), { recursive: true });
   await chmod(cliDistPath, 0o755).catch(() => undefined);
   await unlink(binPath).catch(() => undefined);
-  await symlink(cliDistPath, binPath);
+  await createCliLink(cliDistPath, binPath);
   await chmod(binPath, 0o755).catch(() => undefined);
 
   return {

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test from "node:test";
+import test, { after, before } from "node:test";
 
 import { createCodexResponsesPayloadCodec } from "../src/responses-codec.js";
 import {
@@ -12,6 +12,30 @@ import {
 } from "../src/reduction.js";
 import { normalizeTokenPilotCodexConfig } from "../src/config.js";
 import { loadCodexSessionSnapshot, upsertCodexSessionSnapshot } from "../src/session-state.js";
+
+const originalHome = process.env.HOME;
+const originalUserProfile = process.env.USERPROFILE;
+const originalLightmem2StateDir = process.env.LIGHTMEM2_STATE_DIR;
+let reductionSuiteHome = "";
+
+before(async () => {
+  reductionSuiteHome = await mkdtemp(join(tmpdir(), "lightmem2-codex-reduction-suite-"));
+  process.env.HOME = reductionSuiteHome;
+  process.env.USERPROFILE = reductionSuiteHome;
+  process.env.LIGHTMEM2_STATE_DIR = join(reductionSuiteHome, ".lightmem2", "state");
+});
+
+after(async () => {
+  if (originalHome === undefined) delete process.env.HOME;
+  else process.env.HOME = originalHome;
+  if (originalUserProfile === undefined) delete process.env.USERPROFILE;
+  else process.env.USERPROFILE = originalUserProfile;
+  if (originalLightmem2StateDir === undefined) delete process.env.LIGHTMEM2_STATE_DIR;
+  else process.env.LIGHTMEM2_STATE_DIR = originalLightmem2StateDir;
+  if (reductionSuiteHome) {
+    await rm(reductionSuiteHome, { recursive: true, force: true });
+  }
+});
 
 test("normalizeResponsesInputForUpstream stringifies structured function payloads", () => {
   const input: any[] = [

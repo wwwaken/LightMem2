@@ -1,6 +1,6 @@
 # Logs and Diagnostics
 
-How to find logs, understand diagnostic output, and collect information for bug reports.
+How to find logs and use diagnostic tools.
 
 ## Quick Diagnostic Commands
 
@@ -18,55 +18,7 @@ These answer 90% of "is it working?" questions.
 
 | Host | Log Location | Notes |
 | :-- | :-- | :-- |
-| OpenClaw | OpenClaw's own logs | TokenPilot runs inside OpenClaw process |
-| Codex | `~/.codex/logs/` | Proxy and hook logs |
-| Claude Code | `~/.claude/logs/` | Gateway logs |
-
-## Understanding Doctor Output
-
-```text
-plugin entry enabled:   yes    ← Plugin is registered with the host
-config enabled:          yes    ← Plugin config is readable and valid
-mode:                    normal ← Current runtime mode
-stabilizer enabled:      yes    ← Stable prefix is active
-reduction enabled:       yes    ← Context reduction is active
-proxy healthy:           yes    ← (Codex/Claude Code) Local proxy is running
-config file readable:    yes    ← Config file exists and is valid JSON
-backup files present:    yes    ← .tokenpilot.bak backups exist for recovery
-```
-
-A `yes` in every field = TokenPilot is fully operational.
-
-## Understanding Status Output
-
-```text
-plugin entry:  enabled
-config:        enabled
-mode:          normal
-stabilizer:    enabled
-reduction:     enabled (balanced)
-eviction:      enabled
-```
-
-This is the lightweight version of `doctor` — fast, always available, and sufficient for daily use.
-
-## Collecting Info for Bug Reports
-
-When [reporting a bug](/plugin-catalog/tokenpilot/troubleshooting#reporting-a-bug), include:
-
-```bash
-# Run these and save the output
-lightmem2 doctor > doctor.txt 2>&1
-lightmem2 status > status.txt 2>&1
-lightmem2 report > report.txt 2>&1
-
-# Also note:
-# - Your OS and version
-# - Your host and version
-# - Any custom config paths (env vars set)
-# - What you expected to happen
-# - What actually happened
-```
+| OpenClaw | `~/.openclaw/logs/gateway.log` | Gateway log confirmed in source |
 
 ## Next
 

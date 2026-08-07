@@ -134,20 +134,25 @@ export async function processCodexHookEvent(event: Record<string, unknown>): Pro
     ? await resolveCodexSessionAlias(config.stateDir, codexSessionId) ?? codexSessionId
     : undefined;
   const workspaceHint = workspaceHintFromEvent(event);
+  const transcriptPath = stringValue(event.transcript_path);
+  const hookModel = stringValue(event.model);
   const tool = extractToolEvent(event);
   const common = {
     hookEventName,
     codexSessionId: codexSessionId ?? null,
     sessionId: sessionId ?? null,
-    transcriptPath: stringValue(event.transcript_path) ?? null,
+    transcriptPath: transcriptPath ?? null,
     cwd: workspaceHint ?? null,
-    model: stringValue(event.model) ?? null,
+    model: hookModel ?? null,
   };
 
   if (sessionId) {
     try {
       await upsertCodexSessionSnapshot(config.stateDir, sessionId, {
+        codexSessionId,
+        latestModel: hookModel,
         workspaceHint,
+        transcriptPath,
         lastHookEvent: hookEventName,
         lastToolName: tool.toolName ?? undefined,
         lastToolInputChars: tool.toolInputChars,
