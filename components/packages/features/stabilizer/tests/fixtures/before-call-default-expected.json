@@ -13,7 +13,7 @@
   "messages": [
     {
       "role": "user",
-      "content": "- WORKDIR: /tmp/demo/project\n- AGENT_ID: main\n\nPlease analyze the repository."
+      "content": "- WORKDIR: /tmp/demo/project\n- AGENT_ID: main\n\nSender (untrusted metadata): ```json\n{\"agent\":\"main\"}\n```\n\nPlease analyze the repository."
     }
   ],
   "rawPayload": {
