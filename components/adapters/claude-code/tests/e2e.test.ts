@@ -42,6 +42,9 @@ test("Claude Code host e2e wires install, gateway reduction, report/visual, and 
     const seenPayloads: Array<Record<string, unknown>> = [];
     const longToolPayload = createLongToolPayload();
     const forwarder: HostGatewayForwarder = {
+      async requestRaw() {
+        throw new Error("requestRaw not used in test");
+      },
       async request(params) {
         seenPayloads.push(params.payload as Record<string, unknown>);
         return {

@@ -1,7 +1,9 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { createServer } from "node:http";
 import { mkdir } from "node:fs/promises";
+import { performance } from "node:perf_hooks";
+import { Readable, Transform } from "node:stream";
 import {
   findFirstMessageText,
   prepareObservedBeforeCall,
@@ -15,6 +17,7 @@ import {
   type HostRequestEnvelope,
   prepareBeforeCallWithReductionSummary,
   recordUxEffect,
+  forwardGatewayRawRequest,
   sendJsonResponse,
   startHostGatewayRuntimeServer,
   setForwardResponseHeaders,
@@ -389,6 +392,155 @@ function canAttemptCodexRebase(params: {
   );
 }
 
+function upstreamRequestPath(baseUrl: string, inboundPath: string): string {
+  const base = baseUrl.replace(/\/+$/, "");
+  if (base.endsWith("/v1")) {
+    return inboundPath.startsWith("/v1") ? inboundPath.slice(3) || "/" : inboundPath;
+  }
+  return inboundPath.startsWith("/v1") ? inboundPath : `/v1${inboundPath}`;
+}
+
+async function forwardPureProviderWire(params: {
+  upstream: Awaited<ReturnType<typeof resolveUpstreamProvider>>;
+  req: import("node:http").IncomingMessage;
+  res: import("node:http").ServerResponse;
+  pathname: string;
+  body: string;
+  controller: AbortController;
+  stateDir: string;
+  requestStartedAt: number;
+  bodyReceivedAt: number;
+}): Promise<void> {
+  const requestId = randomUUID();
+  const dispatchAt = performance.now();
+  const requestBytes = Buffer.byteLength(params.body, "utf8");
+  let responseStatus: number | null = null;
+  let headersAt: number | null = null;
+  let firstResponseBodyChunkAt: number | null = null;
+  let lastResponseBodyChunkAt: number | null = null;
+  let downstreamFinishAt: number | null = null;
+  let abortSource: string | null = null;
+  const traceTiming = () => ({
+    pre_upstream_ms: dispatchAt - params.requestStartedAt,
+    body_received_ms: params.bodyReceivedAt - params.requestStartedAt,
+    upstream_headers_ms: headersAt === null ? null : headersAt - dispatchAt,
+    upstream_first_chunk_ms: firstResponseBodyChunkAt === null || headersAt === null
+      ? null
+      : firstResponseBodyChunkAt - headersAt,
+    upstream_stream_ms: firstResponseBodyChunkAt === null || lastResponseBodyChunkAt === null
+      ? null
+      : lastResponseBodyChunkAt - firstResponseBodyChunkAt,
+    downstream_drain_ms: downstreamFinishAt === null
+      ? null
+      : downstreamFinishAt - (lastResponseBodyChunkAt ?? headersAt ?? dispatchAt),
+    total_ms: downstreamFinishAt === null ? null : downstreamFinishAt - params.requestStartedAt,
+  });
+  const appendTimingTrace = (stage: string, extra: Record<string, unknown> = {}) => {
+    void appendTrace(params.stateDir, {
+      stage,
+      requestId,
+      method: params.req.method ?? "POST",
+      pathname: params.pathname,
+      requestBytes,
+      responseStatus,
+      hasResponseBody: firstResponseBodyChunkAt !== null,
+      ...traceTiming(),
+      ...extra,
+    }).catch(() => {});
+  };
+  params.req.once("aborted", () => {
+    abortSource = "request_aborted";
+    params.controller.abort();
+  });
+  params.res.once("close", () => {
+    abortSource = params.res.writableFinished ? "response_close_after_finish" : "response_close_before_finish";
+    params.controller.abort();
+  });
+  try {
+    const authorization = params.req.headers.authorization;
+    const inboundAuthorization = Array.isArray(authorization)
+      ? authorization.join(", ")
+      : authorization;
+    const response = await forwardGatewayRawRequest({
+      upstream: {
+        baseUrl: params.upstream.baseUrl,
+        apiKey: params.upstream.apiKey,
+        name: params.upstream.name,
+        protocol: "custom",
+      },
+      method: params.req.method ?? "POST",
+      requestPath: upstreamRequestPath(params.upstream.baseUrl, params.pathname),
+      body: params.body,
+      inboundAuthorization,
+      inboundHeaders: params.req.headers,
+      includeJsonContentType: false,
+      signal: params.controller.signal,
+    });
+    responseStatus = response.status;
+    headersAt = performance.now();
+    params.res.statusCode = response.status;
+    setForwardResponseHeaders(
+      params.res,
+      Object.fromEntries(response.headers.entries()),
+      "application/octet-stream",
+    );
+    if (!response.body) {
+      await new Promise<void>((resolve, reject) => {
+        params.res.once("finish", resolve);
+        params.res.once("error", reject);
+        params.res.end();
+      });
+      downstreamFinishAt = performance.now();
+      appendTimingTrace("pure_forward_timing", { hasResponseBody: false });
+      return;
+    }
+    const observer = new Transform({
+      transform(chunk, _encoding, callback) {
+        const now = performance.now();
+        if (firstResponseBodyChunkAt === null) firstResponseBodyChunkAt = now;
+        lastResponseBodyChunkAt = now;
+        callback(null, chunk);
+      },
+    });
+    const upstreamStream = Readable.fromWeb(response.body as any);
+    await new Promise<void>((resolve, reject) => {
+      params.res.once("finish", () => {
+        downstreamFinishAt = performance.now();
+        resolve();
+      });
+      params.res.once("error", reject);
+      upstreamStream.once("error", reject);
+      observer.once("error", reject);
+      upstreamStream.pipe(observer).pipe(params.res);
+    });
+    appendTimingTrace("pure_forward_timing");
+  } catch (error) {
+    if (params.controller.signal.aborted || params.res.destroyed) {
+      appendTimingTrace("pure_forward_cancelled", {
+        abortSource,
+        responseDestroyed: params.res.destroyed,
+        responseWritableEnded: params.res.writableEnded,
+        responseWritableFinished: params.res.writableFinished,
+      });
+      return;
+    }
+    if (!params.res.headersSent) {
+      sendJsonResponse(params.res, 502, {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    } else {
+      params.res.destroy(error instanceof Error ? error : new Error(String(error)));
+    }
+    appendTimingTrace("pure_forward_failed", {
+      errorClass: error instanceof Error ? error.name : "unknown",
+      abortSource,
+      responseDestroyed: params.res.destroyed,
+      responseWritableEnded: params.res.writableEnded,
+      responseWritableFinished: params.res.writableFinished,
+    });
+  }
+}
+
 export async function startCodexResponsesProxy(params: {
   config: TokenPilotCodexConfig;
   logger: TokenPilotCodexLogger;
@@ -473,6 +625,42 @@ export async function startCodexResponsesProxy(params: {
       adapter: "tokenpilot-codex",
       upstream: upstreamProviderName,
       stateDir: config.stateDir,
+    },
+    async handleRoute({ req, res, pathname, readBody }) {
+      if (!config.proxyMode.pureForward
+        || req.method !== "POST"
+        || !["/v1/responses", "/v1/chat/completions"].includes(pathname)) {
+        return false;
+      }
+      const requestStartedAt = performance.now();
+      const controller = new AbortController();
+      const onRequestAborted = () => controller.abort();
+      const onResponseClose = () => {
+        if (!res.writableFinished) controller.abort();
+      };
+      req.once("aborted", onRequestAborted);
+      res.once("close", onResponseClose);
+      try {
+        const body = await readBody(controller.signal);
+        const bodyReceivedAt = performance.now();
+        await forwardPureProviderWire({
+          upstream,
+          req,
+          res,
+          pathname,
+          body,
+          controller,
+          stateDir: config.stateDir,
+          requestStartedAt,
+          bodyReceivedAt,
+        });
+      } catch (error) {
+        if (!controller.signal.aborted && !res.destroyed) throw error;
+      } finally {
+        req.off("aborted", onRequestAborted);
+        res.off("close", onResponseClose);
+      }
+      return true;
     },
     async handleRequest({ req, res, body }) {
       const inboundPayload = JSON.parse(body) as JsonObject;

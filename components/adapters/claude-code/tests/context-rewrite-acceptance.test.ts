@@ -25,6 +25,9 @@ const TEST_UUID = "123e4567-e89b-42d3-a456-426614174000";
 
 function createClaudeForwarder(upstreamUrl: string): HostGatewayForwarder {
   return {
+    async requestRaw() {
+      throw new Error("requestRaw not used in test");
+    },
     async request({ payload }) {
       const response = await fetch(`${upstreamUrl}/v1/messages`, {
         method: "POST",

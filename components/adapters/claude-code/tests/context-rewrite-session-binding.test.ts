@@ -32,6 +32,9 @@ async function reserveUnusedPort(): Promise<number> {
 
 function okForwarder(): HostGatewayForwarder {
   return {
+    async requestRaw() {
+      throw new Error("requestRaw not used in test");
+    },
     async request() {
       return {
         status: 200,

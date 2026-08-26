@@ -7,6 +7,7 @@ import type {
 } from "@lightrsi/host-adapter";
 import {
   buildGatewayForwardHeaders,
+  forwardGatewayRawRequest,
   readJsonFile,
   resolveGatewayRequestUrl,
   writeJsonFileAtomic,
@@ -204,5 +205,6 @@ export function createClaudeCodeGatewayForwarder(config: TokenPilotClaudeCodeCon
   return {
     request,
     requestStream,
+    requestRaw: forwardGatewayRawRequest,
   };
 }
