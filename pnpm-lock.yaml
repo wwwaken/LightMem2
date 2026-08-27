@@ -176,6 +176,9 @@ importers:
 
   components/packages/features/cleaner:
     dependencies:
+      '@lightrsi/eviction':
+        specifier: workspace:*
+        version: link:../eviction
       '@lightrsi/history':
         specifier: workspace:*
         version: link:../../foundation/history
