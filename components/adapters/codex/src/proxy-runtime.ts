@@ -19,6 +19,7 @@ import {
   startHostGatewayRuntimeServer,
   setForwardResponseHeaders,
 } from "@lightrsi/host-adapter";
+import { readContextCleanReceipt } from "@lightrsi/cleaner";
 import { configureStatePathResolver } from "@lightrsi/artifact-store";
 import type { TokenPilotCodexConfig } from "./config.js";
 import {
@@ -98,16 +99,14 @@ import type {
   CodexRebaseRequestResult,
 } from "./context-rewrite/types.js";
 import {
+  finalizeCodexCleanerAppliedReceipt,
   finalizeCodexCleanerHandoffFailure,
   isCodexCleanerStaleReasonCode,
   prepareCodexCleanerRebase,
   revalidateCodexCleanerPreparedRebase,
   type CodexCleanerPreparedRebase,
 } from "./context-cleaner/runtime.js";
-import {
-  appendCodexCleanerCommitted,
-  readCodexCleanerSchedule,
-} from "./context-cleaner/scheduler.js";
+import { readCodexCleanerSchedule } from "./context-cleaner/scheduler.js";
 
 export type CodexProxyRuntime = {
   baseUrl: string;
@@ -581,8 +580,17 @@ export async function startCodexResponsesProxy(params: {
         stateDir: config.stateDir,
         sessionId,
       });
+      const committedCleanerReceipt = cleanerSchedule.outcome === "committed"
+        ? await readContextCleanReceipt({
+          stateDir: config.stateDir,
+          planId: cleanerSchedule.record.cleanPlanId,
+        })
+        : undefined;
       const manualCleanerReserved = cleanerSchedule.outcome === "ready"
-        || cleanerSchedule.outcome === "bypassed";
+        || cleanerSchedule.outcome === "bypassed"
+        || (cleanerSchedule.outcome === "committed"
+          && (committedCleanerReceipt?.bypassed
+            || committedCleanerReceipt?.value?.status !== "applied"));
       const mutationPlan = manualCleanerReserved || lifecyclePlanningConfigured
         ? undefined
         : activeMutationPlan(config);
@@ -1453,21 +1461,25 @@ export async function startCodexResponsesProxy(params: {
             if (result.outcome === "committed"
               && cleanerPreparedRebase
               && result.epoch?.status === "committed") {
-              const localCommit = await appendCodexCleanerCommitted({
+              const finalized = await finalizeCodexCleanerAppliedReceipt({
                 stateDir: config.stateDir,
                 sessionId,
-                cleanPlanId: cleanerPreparedRebase.execution.cleanPlanId,
-                mutationPlanId: cleanerPreparedRebase.execution.mutationPlan.planId,
-                epochId: result.epoch.epochId,
-                updatedAt: result.epoch.updatedAt,
+                prepared: cleanerPreparedRebase,
+                epoch: result.epoch,
               });
-              if (localCommit.outcome !== "transitioned"
-                && localCommit.outcome !== "unchanged") {
+              await appendTrace(config.stateDir, {
+                stage: "context_cleaner_applied_receipt_finalized",
+                sessionId,
+                model,
+                outcome: finalized.outcome,
+                reasonCodes: finalized.reasonCodes,
+              });
+              if (finalized.outcome !== "applied") {
                 await appendTrace(config.stateDir, {
-                  stage: "context_cleaner_local_commit_failed",
+                  stage: "context_cleaner_applied_receipt_failed",
                   sessionId,
                   model,
-                  reasonCodes: localCommit.reasons,
+                  reasonCodes: finalized.reasonCodes,
                 });
               }
             }

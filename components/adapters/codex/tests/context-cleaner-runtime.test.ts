@@ -34,11 +34,13 @@ import {
   type CodexLifecycleBackendRequestBase,
 } from "../src/context-rewrite/index.js";
 import {
+  finalizeCodexCleanerAppliedReceipt,
   finalizeCodexCleanerHandoffFailure,
   prepareCodexCleanerRebase,
   revalidateCodexCleanerPreparedRebase,
 } from "../src/context-cleaner/runtime.js";
 import {
+  appendCodexCleanerCommitted,
   readCodexCleanerSchedule,
   scheduleCodexCleanerPlan,
 } from "../src/context-cleaner/scheduler.js";
@@ -491,6 +493,7 @@ test("Codex cleaner runtime repairs the crash window after a committed rebase ep
       epochId: "epoch-crash-window",
       oldPreviousResponseId: "response-parent",
       oldRevision: first.prepared.rebaseRequest.oldRevision,
+      accounting: first.prepared.rebaseRequest.accounting,
     });
     await commitCodexRebaseEpoch({
       stateDir,
@@ -498,17 +501,51 @@ test("Codex cleaner runtime repairs the crash window after a committed rebase ep
       epochId: "epoch-crash-window",
       newResponseId: "response-after-clean",
       newRevision: first.prepared.rebaseRequest.rebaseRevision,
+      accounting: first.prepared.rebaseRequest.accounting,
       updatedAt: "2026-08-22T00:00:05.000Z",
     });
+    assert.equal((await appendCodexCleanerCommitted({
+      stateDir,
+      sessionId: SESSION_ID,
+      cleanPlanId: CLEAN_PLAN_ID,
+      mutationPlanId: first.prepared.execution.mutationPlan.planId,
+      epochId: "epoch-crash-window",
+      updatedAt: "2026-08-22T00:00:05.000Z",
+    })).outcome, "transitioned");
 
+    const postCommitView = sourceView("post-commit-revision");
     const recovered = await prepareCodexCleanerRebase({
       stateDir,
       sessionId: SESSION_ID,
-      view: seeded.view,
-      backendRequest: seeded.request,
+      view: postCommitView,
+      backendRequest: backendRequest(postCommitView),
       now: "2026-08-22T00:00:06.000Z",
     });
     assert.equal(recovered.outcome, "committed");
+    const receipt = await readContextCleanReceipt({ stateDir, planId: CLEAN_PLAN_ID });
+    assert.equal(receipt.value?.status, "applied");
+    if (receipt.value?.status === "applied") {
+      assert.equal(
+        receipt.value.appliedSavedChars,
+        first.prepared.rebaseRequest.accounting.actuallyRemovedChars,
+      );
+      assert.equal(receipt.value.appliedSavedTokens, null);
+      assert.equal(receipt.value.evidence.previousRevision, REVISION);
+      assert.equal(
+        receipt.value.evidence.nextRevision,
+        first.prepared.rebaseRequest.rebaseRevision,
+      );
+      assert.deepEqual(
+        receipt.value.evidence.itemIds,
+        first.prepared.execution.mutationPlan.operations.flatMap(
+          (operation) => operation.targetItemIds,
+        ),
+      );
+      assert.deepEqual(
+        receipt.value.evidence.operationIds,
+        first.prepared.execution.mutationPlan.operations.map((operation) => operation.id),
+      );
+    }
     const local = await readCodexCleanerSchedule({ stateDir, sessionId: SESSION_ID });
     assert.equal(local.outcome, "committed");
     if (local.outcome === "committed") {
@@ -518,6 +555,59 @@ test("Codex cleaner runtime repairs the crash window after a committed rebase ep
         first.prepared.execution.mutationPlan.planId,
       );
     }
+  });
+});
+
+test("Codex cleaner finalizer rejects malformed actual accounting without applying", async () => {
+  await withTempState(async (stateDir) => {
+    const seeded = await seedScheduledClean(stateDir);
+    const prepared = await prepareCodexCleanerRebase({
+      stateDir,
+      sessionId: SESSION_ID,
+      view: seeded.view,
+      backendRequest: seeded.request,
+    });
+    assert.equal(prepared.outcome, "ready");
+    if (prepared.outcome !== "ready") return;
+
+    const invalidAccounting = {
+      ...prepared.prepared.rebaseRequest.accounting,
+      actuallyRemovedChars: 1.5,
+    };
+    await appendPendingCodexRebaseEpoch({
+      stateDir,
+      sessionId: SESSION_ID,
+      planId: prepared.prepared.execution.mutationPlan.planId,
+      epochId: "epoch-invalid-accounting",
+      oldPreviousResponseId: "response-parent",
+      oldRevision: prepared.prepared.rebaseRequest.oldRevision,
+      accounting: invalidAccounting,
+    });
+    const epoch = await commitCodexRebaseEpoch({
+      stateDir,
+      sessionId: SESSION_ID,
+      epochId: "epoch-invalid-accounting",
+      newResponseId: "response-invalid-accounting",
+      newRevision: prepared.prepared.rebaseRequest.rebaseRevision,
+      accounting: invalidAccounting,
+      updatedAt: "2026-08-22T00:00:05.000Z",
+    });
+    const finalized = await finalizeCodexCleanerAppliedReceipt({
+      stateDir,
+      sessionId: SESSION_ID,
+      prepared: prepared.prepared,
+      epoch,
+    });
+    assert.equal(finalized.outcome, "reserved");
+    assert.ok(finalized.reasonCodes.includes("cleaner_receipt_epoch_invalid"));
+    assert.equal(
+      (await readContextCleanReceipt({ stateDir, planId: CLEAN_PLAN_ID })).value?.status,
+      "scheduled",
+    );
+    assert.equal(
+      (await readCodexCleanerSchedule({ stateDir, sessionId: SESSION_ID })).outcome,
+      "ready",
+    );
   });
 });
 
@@ -753,10 +843,17 @@ test("Codex proxy gives the scheduled manual cleaner exclusive ownership of the 
         (await readCodexCleanerSchedule({ stateDir, sessionId })).outcome,
         "committed",
       );
-      assert.equal(
-        (await readContextCleanReceipt({ stateDir, planId: cleanPlanId })).value?.status,
-        "scheduled",
-      );
+      const appliedReceipt = await readContextCleanReceipt({ stateDir, planId: cleanPlanId });
+      assert.equal(appliedReceipt.value?.status, "applied");
+      if (appliedReceipt.value?.status === "applied") {
+        assert.equal(appliedReceipt.value.fallbackUsed, false);
+        assert.ok(appliedReceipt.value.appliedSavedChars > 0);
+        assert.equal(appliedReceipt.value.appliedSavedTokens, null);
+        assert.equal(appliedReceipt.value.evidence.previousRevision, snapshot.revision);
+        assert.ok(appliedReceipt.value.evidence.nextRevision.trim());
+        assert.equal(appliedReceipt.value.evidence.operationIds.length, 1);
+        assert.deepEqual(appliedReceipt.value.evidence.itemIds, [selectedItem.stableItemId]);
+      }
 
       const estimatorCallsAfterManualCommit = estimator.calls();
       assert.equal((await send({
