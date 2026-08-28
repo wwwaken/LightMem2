@@ -1,7 +1,6 @@
 import type { StabilizerRequestEnvelope } from "./contracts.js";
 import {
   extractContentText,
-  normalizeUserMessageText,
   prependTextToContent,
   replaceContentText,
   rewriteTextForStablePrefix,
@@ -176,26 +175,6 @@ function rewriteSystemMessage(messages: StabilizerRequestEnvelope["messages"]): 
   };
 }
 
-function normalizeUserMessages(messages: StabilizerRequestEnvelope["messages"]): {
-  changed: boolean;
-  messages: StabilizerRequestEnvelope["messages"];
-} {
-  let changed = false;
-  const nextMessages = messages.map((message) => {
-    if (message?.role !== "user") return message;
-    const sourceText = extractContentText(message.content);
-    if (!sourceText.trim()) return message;
-    const normalizedText = normalizeUserMessageText(sourceText);
-    if (normalizedText === sourceText) return message;
-    changed = true;
-    return {
-      ...message,
-      content: replaceContentText(message.content, normalizedText),
-    };
-  });
-  return { changed, messages: changed ? nextMessages : messages };
-}
-
 function injectDynamicContext(
   messages: StabilizerRequestEnvelope["messages"],
   dynamicContextText: string,
@@ -227,14 +206,12 @@ export function defaultPrepareStablePrefix<TEnvelope extends StabilizerRequestEn
   const systemRewrite = instructionRewrite.changed
     ? { changed: false, messages: sourceMessages, dynamicContextText: instructionRewrite.dynamicContextText }
     : rewriteSystemMessage(sourceMessages);
-  const normalizedUsers = normalizeUserMessages(systemRewrite.messages);
   const dynamicContextText = instructionRewrite.dynamicContextText || systemRewrite.dynamicContextText;
-  const dynamicInjection = injectDynamicContext(normalizedUsers.messages, dynamicContextText);
+  const dynamicInjection = injectDynamicContext(systemRewrite.messages, dynamicContextText);
 
   const anyChanged =
     instructionRewrite.changed ||
     systemRewrite.changed ||
-    normalizedUsers.changed ||
     dynamicInjection.changed;
 
   if (!anyChanged) return envelope;

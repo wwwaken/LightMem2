@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import type { RuntimeContentBlock } from "@lightrsi/kernel";
 
 import {
   applyStablePrefixToInstructions,
   buildStabilityVisualSnapshotFromTexts,
   canonicalizeTools,
+  defaultPrepareStablePrefix,
   fingerprintStablePrefixEnvelope,
   rewriteTextForStablePrefix,
   type StabilizerRequestEnvelope,
@@ -46,6 +48,43 @@ test("stable prefix preparation preserves host-specific envelope fields", () => 
   assert.equal(prepared.transport, "responses");
   assert.equal(prepared.instructions, "Runtime: agent=agent-123");
   assert.match(String(prepared.messages[0].content), /Current date: 2026-07-21/);
+});
+
+test("default stable prefix preparation preserves user payload bytes", () => {
+  const userText = " [request-123] \r\n- CURRENT_DATE: 2026-08-26\r\nSender (untrusted metadata): ```json\n{\"x\":1}\n```\r\nKeep exact.";
+  const input = envelope(userText);
+  input.instructions = "Stable instructions";
+
+  const prepared = defaultPrepareStablePrefix(input);
+
+  assert.equal(prepared, input);
+  assert.equal(prepared.messages[0]?.content, userText);
+});
+
+test("default stable prefix preparation injects context without rewriting structured user content", () => {
+  const content: RuntimeContentBlock[] = [
+    { type: "text", text: "[IMPORTANT] keep exact\r\n---\nvalue: user-owned" },
+    { type: "image", imageUrl: "https://example.com/user-owned.png" },
+  ];
+  const input: StabilizerRequestEnvelope = {
+    session: { host: { hostId: "test-host" } },
+    model: "test-model",
+    instructions: "Your working directory is: C:\\repo\\project\nRuntime: agent=agent-123 | session_id=session-456",
+    messages: [{ role: "user", content }],
+    tools: [],
+  };
+
+  const prepared = defaultPrepareStablePrefix(input);
+
+  assert.notEqual(prepared, input);
+  assert.deepEqual(input.messages[0]?.content, content);
+  assert.deepEqual(prepared.messages[0]?.content, [
+    {
+      type: "text",
+      text: "- WORKDIR: C:\\repo\\project\n- AGENT_ID: agent-123\nsession_id=session-456\n\n[IMPORTANT] keep exact\r\n---\nvalue: user-owned",
+    },
+    { type: "image", imageUrl: "https://example.com/user-owned.png" },
+  ]);
 });
 
 test("stable prefix fingerprint excludes volatile user tail", () => {
