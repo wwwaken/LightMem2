@@ -538,6 +538,7 @@ function validateFixtureAgainstCodec(fixture: SessionEventFixture): void {
   const snapshot = buildDshRawSemanticSnapshot(
     fixture.sessionId,
     fixture.events as never,
+    { surfaceEventSeqs: fixture.effectiveEventSeqs },
   );
   const effective = new Set(fixture.effectiveEventSeqs);
   const eventsBySeq = new Map(fixture.events.map((event) => [event.seq, event]));
@@ -576,6 +577,21 @@ function validateFixtureAgainstCodec(fixture: SessionEventFixture): void {
       candidate.role === role && candidate.anchor.turnSeq === turn && candidate.text.includes(marker),
     );
     assert.ok(message, `${fixture.id} ${expected.itemId} must be emitted by the codec`);
+  }
+
+  const emittedItemCount = snapshot.messages.length
+    + snapshot.toolCalls.length
+    + snapshot.toolResults.length;
+  assert.equal(
+    emittedItemCount,
+    fixture.expected.items.length,
+    `${fixture.id} codec output must contain only effective semantic items`,
+  );
+  const emittedText = JSON.stringify(snapshot);
+  for (const event of fixture.events) {
+    if (effective.has(event.seq)) continue;
+    const shadowedText = fixtureEventText(event);
+    if (shadowedText) assert.equal(emittedText.includes(shadowedText), false);
   }
 }
 

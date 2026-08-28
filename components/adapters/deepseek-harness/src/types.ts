@@ -84,6 +84,8 @@ export type DshLogEvent = DshDurableEvent | DshUnknownEvent;
 export type DshLogEventWithMeta = DshLogEvent & { ignorable?: true };
 
 export interface DshSessionSurface {
+  /** Current model-visible surface event seqs in canonical order. */
+  readonly nodes: readonly number[];
   /** Monotonic count of committed surface `replace` ops. */
   replaceGeneration: number;
 }

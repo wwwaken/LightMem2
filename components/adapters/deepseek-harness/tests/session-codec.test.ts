@@ -67,6 +67,15 @@ describe("buildDshRawSemanticSnapshot", () => {
     assert.deepEqual(b, a);
     assert.equal(a.messages[2].anchor.turnAbsId, `${SESSION}:t2`);
   });
+
+  it("excludes shadowed surface messages while retaining their visible tool pair", () => {
+    const snap = buildDshRawSemanticSnapshot(SESSION, fixtureEvents(), {
+      surfaceEventSeqs: [4, 6, 11],
+    });
+    assert.deepEqual(snap.messages.map((message) => message.text), ["I'll add it.", "now write a test"]);
+    assert.deepEqual(snap.toolCalls.map((call) => call.toolCallId), ["call_a"]);
+    assert.deepEqual(snap.toolResults.map((result) => result.toolCallId), ["call_a"]);
+  });
 });
 
 describe("buildDshDeltaView", () => {

@@ -113,11 +113,32 @@ function isTextBlock(block: DshContentBlock): block is { type: "text"; text: str
 export function buildDshRawSemanticSnapshot(
   sessionId: string,
   events: readonly DshLogEvent[],
+  options: { surfaceEventSeqs?: readonly number[] } = {},
 ): RawSemanticSnapshot {
   const messages: RawSemanticMessageRecord[] = [];
   const toolCalls: RawSemanticToolCallRecord[] = [];
   const toolResults: RawSemanticToolResultRecord[] = [];
   const toolNameByCallId = new Map<string, string>();
+  const surfaceEventSeqs = options.surfaceEventSeqs
+    ? new Set(options.surfaceEventSeqs)
+    : undefined;
+  const visibleCallIds = new Set<string>();
+
+  if (surfaceEventSeqs) {
+    for (const event of events) {
+      if (!surfaceEventSeqs.has(event.seq) || !isKnownEvent(event)) continue;
+      if (event.type === "tool/result") {
+        const callId = event.data.message.source?.callId ?? extractResultCallId(event.data.message);
+        if (callId) visibleCallIds.add(callId);
+      } else if (event.type === "assistant/message") {
+        for (const block of event.data.message.content ?? []) {
+          if (block.type === "tool-call" && typeof block.id === "string" && block.id) {
+            visibleCallIds.add(block.id);
+          }
+        }
+      }
+    }
+  }
 
   let currentTurn = 0;
   let lastTurnSeq = 0;
@@ -134,6 +155,7 @@ export function buildDshRawSemanticSnapshot(
       }
 
       case "user/message": {
+        if (surfaceEventSeqs && !surfaceEventSeqs.has(event.seq)) break;
         const text = visibleText(event.data);
         if (text.length > 0) {
           messages.push({ anchor: anchor(sessionId, currentTurn, "user"), role: "user", text });
@@ -144,6 +166,7 @@ export function buildDshRawSemanticSnapshot(
       case "assistant/message": {
         const turn = event.data.turn ?? currentTurn;
         lastTurnSeq = Math.max(lastTurnSeq, turn);
+        if (surfaceEventSeqs && !surfaceEventSeqs.has(event.seq)) break;
         const text = visibleText(event.data.message);
         if (text.length > 0) {
           messages.push({ anchor: anchor(sessionId, turn, "assistant"), role: "assistant", text });
@@ -154,6 +177,9 @@ export function buildDshRawSemanticSnapshot(
       case "tool/call": {
         const turn = event.data.turn ?? currentTurn;
         lastTurnSeq = Math.max(lastTurnSeq, turn);
+        if (surfaceEventSeqs
+          && !surfaceEventSeqs.has(event.seq)
+          && !visibleCallIds.has(event.data.callId)) break;
         const args = event.data.arguments ?? "";
         toolCalls.push({
           anchor: anchor(sessionId, turn, "assistant"),
@@ -169,6 +195,7 @@ export function buildDshRawSemanticSnapshot(
       case "tool/result": {
         const turn = event.data.turn ?? currentTurn;
         lastTurnSeq = Math.max(lastTurnSeq, turn);
+        if (surfaceEventSeqs && !surfaceEventSeqs.has(event.seq)) break;
         const callId = event.data.message.source?.callId ?? extractResultCallId(event.data.message);
         const fullText = visibleText(event.data.message);
         toolResults.push({

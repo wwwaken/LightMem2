@@ -27,7 +27,13 @@ function mockCtx(): { ctx: DshPluginContext; getHandler: () => Handler } {
 
 function payloadWith(events: DshLogEventWithMeta[], opts: { aborted?: boolean } = {}): DshPreStepPayload {
   return {
-    agent: { session: { id: "sess-x", events, surface: { replaceGeneration: 0 } } },
+    agent: {
+      session: {
+        id: "sess-x",
+        events,
+        surface: { nodes: events.map((event) => event.seq), replaceGeneration: 0 },
+      },
+    },
     messages: [],
     turn: 1,
     step: 0,
