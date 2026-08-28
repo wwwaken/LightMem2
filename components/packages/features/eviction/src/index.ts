@@ -3,6 +3,7 @@ export * from "./contracts.js";
 export * from "./context-mutation-plan.js";
 export * from "./planning/index.js";
 export * from "./task-state-estimator.js";
+export * from "./json-model-client.js";
 export * from "./task-update-mapper.js";
 export * from "./history-apply.js";
 export * from "./lifecycle-policy-context.js";

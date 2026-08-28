@@ -5,6 +5,7 @@ import type {
   TaskStateEstimatorInput,
   TaskStateEstimatorOutput,
 } from "./types.js";
+import { createApiJsonModelClient } from "./json-model-client.js";
 
 function truncateText(value: string, maxChars = 600): string {
   const text = value.trim();
@@ -14,10 +15,6 @@ function truncateText(value: string, maxChars = 600): string {
 
 function uniqueStrings(values: Iterable<string>): string[] {
   return [...new Set([...values].filter((value) => value.trim().length > 0))];
-}
-
-function normalizeBaseUrl(baseUrl: string): string {
-  return baseUrl.replace(/\/+$/, "");
 }
 
 function buildSystemPrompt(
@@ -224,40 +221,6 @@ function buildUserPayload(
   });
 }
 
-function extractTextFromResponsePayload(payload: any): string {
-  const output = Array.isArray(payload?.output) ? payload.output : [];
-  const texts: string[] = [];
-  for (const item of output) {
-    const content = Array.isArray(item?.content) ? item.content : [];
-    for (const part of content) {
-      if (typeof part?.text === "string" && part.text.trim()) {
-        texts.push(part.text.trim());
-      }
-    }
-  }
-  if (texts.length > 0) return texts.join("\n");
-  if (typeof payload?.output_text === "string" && payload.output_text.trim()) {
-    return payload.output_text.trim();
-  }
-  return "";
-}
-
-function extractTextFromChatCompletionPayload(payload: any): string {
-  const choices = Array.isArray(payload?.choices) ? payload.choices : [];
-  const first = choices[0];
-  const content = first?.message?.content;
-  if (typeof content === "string" && content.trim()) {
-    return content.trim();
-  }
-  if (Array.isArray(content)) {
-    const texts = content
-      .map((part: any) => (typeof part?.text === "string" ? part.text.trim() : ""))
-      .filter((text: string) => text.length > 0);
-    if (texts.length > 0) return texts.join("\n");
-  }
-  return "";
-}
-
 function normalizeTaskUpdate(update: SemanticTaskUpdate): SemanticTaskUpdate {
   return {
     taskId: String(update.taskId ?? "").trim(),
@@ -327,143 +290,23 @@ function parseEstimatorOutput(
   return normalizeEstimatorOutput(parsed, input);
 }
 
-function numberFrom(value: unknown): number | undefined {
-  if (value == null || value === "") return undefined;
-  const numeric = Number(value);
-  return Number.isFinite(numeric) ? numeric : undefined;
-}
-
-function extractUsage(payload: any): TaskStateEstimatorOutput["usage"] {
-  const usage = payload?.usage;
-  if (!usage || typeof usage !== "object") return undefined;
-  const inputTokens = numberFrom(
-    usage.input_tokens ?? usage.prompt_tokens ?? usage.inputTokens ?? usage.promptTokens,
-  ) ?? 0;
-  const outputTokens = numberFrom(
-    usage.output_tokens ?? usage.completion_tokens ?? usage.outputTokens ?? usage.completionTokens,
-  ) ?? 0;
-  const totalTokens = numberFrom(usage.total_tokens ?? usage.totalTokens)
-    ?? inputTokens + outputTokens;
-  const costUsd = numberFrom(
-    usage.cost_usd ?? usage.costUsd ?? usage.total_cost ?? usage.totalCost ?? payload?.cost_usd,
-  );
-  return {
-    inputTokens: Math.max(0, inputTokens),
-    outputTokens: Math.max(0, outputTokens),
-    totalTokens: Math.max(0, totalTokens),
-    ...(costUsd !== undefined ? { costUsd: Math.max(0, costUsd) } : {}),
-  };
-}
-
 export function createApiTaskStateEstimator(
   cfg: TaskStateEstimatorApiConfig,
 ): TaskStateEstimator {
   if (!cfg.baseUrl || !cfg.apiKey || !cfg.model) {
     throw new Error("task-state estimator requires baseUrl, apiKey, and model");
   }
-  const baseUrl = normalizeBaseUrl(cfg.baseUrl);
-  const requestTimeoutMs = Math.max(1000, cfg.requestTimeoutMs ?? 60_000);
   const evictionLookaheadTurns = Math.max(1, cfg.evictionLookaheadTurns ?? 3);
   const lifecycleMode = cfg.lifecycleMode === "decoupled" ? "decoupled" : "coupled";
   const evidenceMode = cfg.evidenceMode === "two_state" ? "two_state" : "three_state";
-  async function requestViaResponses(
-    controller: AbortController,
-    input: TaskStateEstimatorInput,
-  ): Promise<TaskStateEstimatorOutput> {
-    const response = await fetch(`${baseUrl}/responses`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        authorization: `Bearer ${cfg.apiKey}`,
-      },
-      signal: controller.signal,
-      body: JSON.stringify({
-        model: cfg.model,
-        input: [
-          {
-            role: "system",
-            content: [{ type: "input_text", text: buildSystemPrompt({ evictionLookaheadTurns, lifecycleMode, evidenceMode }) }],
-          },
-          {
-            role: "user",
-            content: [{ type: "input_text", text: buildUserPayload(input, evidenceMode) }],
-          },
-        ],
-        text: {
-          format: {
-            type: "json_object",
-          },
-        },
-      }),
-    });
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`responses_api_failed:${response.status}:${errorText}`);
-    }
-    const payload = await response.json();
-    const rawText = extractTextFromResponsePayload(payload);
-    return {
-      ...parseEstimatorOutput(rawText, input),
-      usage: extractUsage(payload),
-    };
-  }
-
-  async function requestViaChatCompletions(
-    controller: AbortController,
-    input: TaskStateEstimatorInput,
-  ): Promise<TaskStateEstimatorOutput> {
-    const response = await fetch(`${baseUrl}/chat/completions`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        authorization: `Bearer ${cfg.apiKey}`,
-      },
-      signal: controller.signal,
-      body: JSON.stringify({
-        model: cfg.model,
-        messages: [
-          {
-            role: "system",
-            content: buildSystemPrompt({ evictionLookaheadTurns, lifecycleMode, evidenceMode }),
-          },
-          {
-            role: "user",
-            content: buildUserPayload(input, evidenceMode),
-          },
-        ],
-        response_format: {
-          type: "json_object",
-        },
-        temperature: 0,
-      }),
-    });
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`chat_completions_failed:${response.status}:${errorText}`);
-    }
-    const payload = await response.json();
-    const rawText = extractTextFromChatCompletionPayload(payload);
-    return {
-      ...parseEstimatorOutput(rawText, input),
-      usage: extractUsage(payload),
-    };
-  }
-
+  const client = createApiJsonModelClient(cfg);
   return {
     async estimate(input: TaskStateEstimatorInput): Promise<TaskStateEstimatorOutput> {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), requestTimeoutMs);
-      try {
-        try {
-          return await requestViaResponses(controller, input);
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          if (!message.includes("responses_api_failed:")) throw error;
-        }
-        return await requestViaChatCompletions(controller, input);
-      } finally {
-        clearTimeout(timeout);
-      }
+      const response = await client.request({
+        systemPrompt: buildSystemPrompt({ evictionLookaheadTurns, lifecycleMode, evidenceMode }),
+        userPayload: buildUserPayload(input, evidenceMode),
+      });
+      return { ...parseEstimatorOutput(response.text, input), usage: response.usage };
     },
   };
 }
