@@ -87,6 +87,9 @@ test("gateway runtime serves health and forwards Claude Messages requests", asyn
   const proxyPort = await reserveUnusedPort();
   const seenPayloads: unknown[] = [];
   const forwarder: HostGatewayForwarder = {
+    async requestRaw() {
+      throw new Error("requestRaw not used in test");
+    },
     async request(params) {
       seenPayloads.push(params.payload);
       return {
@@ -183,6 +186,7 @@ test("gateway snapshot persistence is fail-open and logs only reported failures"
       error() {},
     },
     forwarder: {
+      requestRaw: async () => { throw new Error("requestRaw not used in test"); },
       async request() {
         return {
           status: 200,
@@ -260,6 +264,7 @@ test("gateway persists an unassigned snapshot when task registry recovery fails"
       error() {},
     },
     forwarder: {
+      requestRaw: async () => { throw new Error("requestRaw not used in test"); },
       async request() {
         return {
           status: 200,
@@ -342,6 +347,7 @@ test("gateway publishes only block-proven task attribution from the persisted re
     }),
     logger: createConsoleLogger(false),
     forwarder: {
+      requestRaw: async () => { throw new Error("requestRaw not used in test"); },
       async request() {
         return {
           status: 200,
@@ -653,6 +659,7 @@ test("gateway runtime records session-state and ux-effects after a reduced reque
   const proxyPort = await reserveUnusedPort();
   const longToolPayload = `payload\n${"line\n".repeat(800)}`;
   const forwarder: HostGatewayForwarder = {
+    requestRaw: async () => { throw new Error("requestRaw not used in test"); },
     async request() {
       return {
         status: 200,
@@ -763,6 +770,7 @@ test("gateway runtime reuses the latest real Claude hook session when request ma
   const stateDir = join(dir, "state");
   const longToolPayload = `payload\n${"line\n".repeat(800)}`;
   const forwarder: HostGatewayForwarder = {
+    requestRaw: async () => { throw new Error("requestRaw not used in test"); },
     async request() {
       return {
         status: 200,
@@ -854,6 +862,7 @@ export function saveConfig(file: string, text: string) {
 `.repeat(30);
   const seenPayloads: Array<Record<string, unknown>> = [];
   const forwarder: HostGatewayForwarder = {
+    requestRaw: async () => { throw new Error("requestRaw not used in test"); },
     async request(params) {
       seenPayloads.push(params.payload as Record<string, unknown>);
       return {
@@ -959,6 +968,7 @@ test("gateway runtime does not record ux-effects when reduced request fails upst
   const proxyPort = await reserveUnusedPort();
   const longToolPayload = `payload\n${"line\n".repeat(800)}`;
   const forwarder: HostGatewayForwarder = {
+    requestRaw: async () => { throw new Error("requestRaw not used in test"); },
     async request() {
       throw new Error("upstream failed");
     },
@@ -1027,6 +1037,7 @@ test("gateway runtime applies stable-prefix rewrite before forwarding", async ()
   const proxyPort = await reserveUnusedPort();
   const seenPayloads: Record<string, unknown>[] = [];
   const forwarder: HostGatewayForwarder = {
+    requestRaw: async () => { throw new Error("requestRaw not used in test"); },
     async request(params) {
       seenPayloads.push(params.payload as Record<string, unknown>);
       return {
@@ -1103,6 +1114,7 @@ test("gateway runtime supports developer-targeted stable-prefix injection", asyn
   const proxyPort = await reserveUnusedPort();
   const seenPayloads: Record<string, unknown>[] = [];
   const forwarder: HostGatewayForwarder = {
+    requestRaw: async () => { throw new Error("requestRaw not used in test"); },
     async request(params) {
       seenPayloads.push(params.payload as Record<string, unknown>);
       return {
@@ -1181,6 +1193,7 @@ test("gateway runtime reuses the same Claude prompt_cache_key for the same stabl
   const proxyPort = await reserveUnusedPort();
   const seenPayloads: Record<string, unknown>[] = [];
   const forwarder: HostGatewayForwarder = {
+    requestRaw: async () => { throw new Error("requestRaw not used in test"); },
     async request(params) {
       seenPayloads.push(params.payload as Record<string, unknown>);
       return {
@@ -1252,6 +1265,7 @@ test("gateway runtime preserves inbound Claude prompt_cache_key while converging
   const proxyPort = await reserveUnusedPort();
   const seenPayloads: Record<string, unknown>[] = [];
   const forwarder: HostGatewayForwarder = {
+    requestRaw: async () => { throw new Error("requestRaw not used in test"); },
     async request(params) {
       seenPayloads.push(params.payload as Record<string, unknown>);
       return {
@@ -1422,6 +1436,7 @@ test("gateway eviction preserves tool closure and the active user turn", async (
   const proxyPort = await reserveUnusedPort();
   const seenPayloads: Array<Record<string, unknown>> = [];
   const forwarder: HostGatewayForwarder = {
+    requestRaw: async () => { throw new Error("requestRaw not used in test"); },
     async request(params) {
       seenPayloads.push(params.payload as Record<string, unknown>);
       return {
@@ -1536,6 +1551,7 @@ test("gateway relocates a persisted plan onto shifted history across turns", asy
   const proxyPort = await reserveUnusedPort();
   const seenPayloads: Array<Record<string, unknown>> = [];
   const forwarder: HostGatewayForwarder = {
+    requestRaw: async () => { throw new Error("requestRaw not used in test"); },
     async request(params) {
       seenPayloads.push(params.payload as Record<string, unknown>);
       return {
@@ -1652,6 +1668,7 @@ test("gateway runs the semantic pipeline when an estimator is injected, and stay
   const dir = await mkdtemp(join(tmpdir(), "lightrsi-claude-gateway-semantic-"));
   const proxyPort = await reserveUnusedPort();
   const forwarder: HostGatewayForwarder = {
+    requestRaw: async () => { throw new Error("requestRaw not used in test"); },
     async request() {
       return {
         status: 200,
@@ -1709,6 +1726,7 @@ test("gateway persists a task registry when the injected estimator returns updat
   const dir = await mkdtemp(join(tmpdir(), "lightrsi-claude-gateway-semantic-ok-"));
   const proxyPort = await reserveUnusedPort();
   const forwarder: HostGatewayForwarder = {
+    requestRaw: async () => { throw new Error("requestRaw not used in test"); },
     async request() {
       return {
         status: 200,
@@ -1787,6 +1805,7 @@ test("lifecycle estimator rewrites the real Claude upstream payload", async () =
   const seenPayloads: Array<Record<string, unknown>> = [];
   const bigToolResult = "EVICT_ME_" + "x".repeat(5000);
   const forwarder: HostGatewayForwarder = {
+    requestRaw: async () => { throw new Error("requestRaw not used in test"); },
     async request(params) {
       seenPayloads.push(params.payload as Record<string, unknown>);
       return {
@@ -1909,6 +1928,7 @@ test("lifecycle registry persistence failure bypasses the plan and heuristic fal
   const seenPayloads: Array<Record<string, unknown>> = [];
   const bigToolResult = "EVICT_ME_" + "x".repeat(5000);
   const forwarder: HostGatewayForwarder = {
+    requestRaw: async () => { throw new Error("requestRaw not used in test"); },
     async request(params) {
       seenPayloads.push(params.payload as Record<string, unknown>);
       return {

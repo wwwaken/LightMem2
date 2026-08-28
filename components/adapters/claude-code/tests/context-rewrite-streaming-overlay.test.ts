@@ -38,6 +38,9 @@ test("gateway overlay applies on the streaming path", async () => {
   const proxyPort = await reserveUnusedPort();
   const seenStreamPayloads: Array<Record<string, unknown>> = [];
   const forwarder: HostGatewayForwarder = {
+    async requestRaw() {
+      throw new Error("requestRaw not used in test");
+    },
     async request() {
       throw new Error("non-stream path should not be used in this test");
     },

@@ -20,7 +20,7 @@ export async function startHostGatewayRuntimeServer(params: {
     req: IncomingMessage;
     res: ServerResponse;
     pathname: string;
-    readBody(): Promise<string>;
+    readBody(signal?: AbortSignal): Promise<string>;
   }): Promise<boolean | void>;
   handleRequest(args: {
     req: IncomingMessage;
@@ -39,8 +39,8 @@ export async function startHostGatewayRuntimeServer(params: {
     try {
       let bodyPromise: Promise<string> | null = null;
       const pathname = new URL(req.url ?? "/", "http://127.0.0.1").pathname;
-      const readBody = () => {
-        bodyPromise ??= readHttpRequestBody(req);
+      const readBody = (signal?: AbortSignal) => {
+        bodyPromise ??= readHttpRequestBody(req, signal);
         return bodyPromise;
       };
       if (req.method === "GET" && pathname === "/health") {

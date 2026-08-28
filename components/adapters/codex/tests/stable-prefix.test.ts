@@ -241,6 +241,44 @@ test("cache contract splits cache-relevant options and tool schemas", () => {
   );
 });
 
+test("Tura-shaped command_run schema stays in one cache family across turns", () => {
+  const config = normalizeTokenPilotCodexConfig({});
+  const commandRun = {
+    type: "function",
+    function: {
+      name: "command_run",
+      description: "Run one batch of commands.",
+      parameters: {
+        type: "object",
+        required: ["commands"],
+        properties: {
+          commands: { type: "array", items: { type: "object" } },
+        },
+      },
+    },
+  };
+  const startup = prepareCodexStablePrefix({
+    ...makeCacheFamilyEnvelope("gpt-5.6-sol"),
+    tools: [commandRun],
+    metadata: { promptCacheKey: "tura-startup-session-key" },
+  }, config);
+  const active = prepareCodexStablePrefix({
+    ...makeCacheFamilyEnvelope("gpt-5.6-sol"),
+    tools: [commandRun],
+    metadata: { promptCacheKey: "tura-active-session-key" },
+  }, config);
+  const final = prepareCodexStablePrefix({
+    ...makeCacheFamilyEnvelope("gpt-5.6-sol"),
+    tools: [commandRun],
+    metadata: { promptCacheKey: "tura-final-session-key" },
+  }, config);
+
+  assert.equal(startup.metadata?.lightrsiCacheContractDigest, active.metadata?.lightrsiCacheContractDigest);
+  assert.equal(active.metadata?.lightrsiCacheContractDigest, final.metadata?.lightrsiCacheContractDigest);
+  assert.equal(startup.metadata?.promptCacheKey, active.metadata?.promptCacheKey);
+  assert.equal(active.metadata?.promptCacheKey, final.metadata?.promptCacheKey);
+});
+
 test("cache contract ignores volatile Codex client metadata but preserves semantic options", () => {
   const config = normalizeTokenPilotCodexConfig({});
   const base = makeCacheFamilyEnvelope("gpt-5.6-sol");

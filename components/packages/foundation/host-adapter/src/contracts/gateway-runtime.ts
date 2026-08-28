@@ -18,6 +18,16 @@ export type HostGatewayHttpResponse = {
   text: string;
 };
 
+export type HostGatewayRawRequest = {
+  upstream: HostGatewayUpstreamConfig;
+  method?: string;
+  requestPath?: string;
+  body?: string | Uint8Array;
+  inboundAuthorization?: string;
+  inboundHeaders?: Record<string, string | string[] | undefined>;
+  signal?: AbortSignal;
+};
+
 export type HostGatewayStreamResponse = {
   status: number;
   headers: Record<string, string>;
@@ -48,6 +58,7 @@ export type HostGatewayForwarder = {
       inboundHeaders?: Record<string, string | string[] | undefined>;
     },
   ): Promise<HostGatewayStreamResponse>;
+  requestRaw(params: HostGatewayRawRequest): Promise<Response>;
 };
 
 export type HostGatewayStreamObserver = {

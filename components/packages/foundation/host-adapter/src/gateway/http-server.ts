@@ -1,11 +1,30 @@
 import { type IncomingMessage, type Server, type ServerResponse } from "node:http";
 
-export async function readHttpRequestBody(req: IncomingMessage): Promise<string> {
-  const chunks: Buffer[] = [];
-  for await (const chunk of req) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk)));
+export async function readHttpRequestBody(req: IncomingMessage, signal?: AbortSignal): Promise<string> {
+  if (signal?.aborted) {
+    throw new DOMException("The operation was aborted", "AbortError");
   }
-  return Buffer.concat(chunks).toString("utf8");
+  const chunks: Buffer[] = [];
+  const read = (async () => {
+    for await (const chunk of req) {
+      if (signal?.aborted) {
+        throw new DOMException("The operation was aborted", "AbortError");
+      }
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk)));
+    }
+    return Buffer.concat(chunks).toString("utf8");
+  })();
+  if (!signal) return read;
+  let onAbort: (() => void) | undefined;
+  const aborted = new Promise<never>((_, reject) => {
+    onAbort = () => reject(new DOMException("The operation was aborted", "AbortError"));
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+  try {
+    return await Promise.race([read, aborted]);
+  } finally {
+    if (onAbort) signal.removeEventListener("abort", onAbort);
+  }
 }
 
 export function sendJsonResponse(res: ServerResponse, statusCode: number, payload: unknown): void {
