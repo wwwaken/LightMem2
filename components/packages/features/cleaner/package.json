@@ -12,8 +12,8 @@
     "test": "node --import tsx --test tests/*.test.ts"
   },
   "dependencies": {
-    "@lightrsi/eviction": "workspace:*",
     "@lightrsi/history": "workspace:*",
-    "@lightrsi/host-adapter": "workspace:*"
+    "@lightrsi/host-adapter": "workspace:*",
+    "@lightrsi/runtime-core": "workspace:*"
   }
 }

@@ -532,7 +532,7 @@ test("Codex proxy keeps the original chain when the estimator fails", async () =
       }),
     });
     assert.equal(second.status, 200);
-    assert.equal(estimator.calls(), 2);
+    assert.equal(estimator.calls(), 1);
     assert.equal(upstream.requests.length, 2);
     assert.equal(upstream.requests[1]?.previous_response_id, "resp-lifecycle-1");
     const registry = await loadSessionTaskRegistry(stateDir, sessionId);

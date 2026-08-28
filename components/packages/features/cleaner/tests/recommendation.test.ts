@@ -51,6 +51,15 @@ test("deterministic protection overrides model clean recommendations", async () 
   assert.ok(result.tasks.every((item) => item.reasonCodes.includes("deterministic_protection")));
 });
 
+test("deterministic protection reason remains unique when the model already returned it", async () => {
+  const protectedTask = task({ taskId: "active", lifecycleState: "active", selectable: false });
+  const result = await analyzeContextCleanRecommendations({
+    tasks: [protectedTask],
+    provider: provider(outputFor([protectedTask], { reasonCodes: ["deterministic_protection"] })),
+  });
+  assert.deepEqual(result.tasks[0]?.reasonCodes, ["deterministic_protection"]);
+});
+
 test("a previous model-only protected recommendation does not become a deterministic lock", async () => {
   const original = task({ recommendation: "protected", selectable: true, lifecycleState: "completed" });
   const result = await analyzeContextCleanRecommendations({ tasks: [original], provider: provider(outputFor([original])) });

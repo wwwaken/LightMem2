@@ -40,7 +40,18 @@ export function setForwardResponseHeaders(
 ): void {
   for (const [key, value] of Object.entries(headers)) {
     const lower = key.toLowerCase();
-    if (lower === "content-length" || lower === "content-encoding") continue;
+    if ([
+      "connection",
+      "content-length",
+      "content-encoding",
+      "keep-alive",
+      "proxy-authenticate",
+      "proxy-authorization",
+      "te",
+      "trailer",
+      "transfer-encoding",
+      "upgrade",
+    ].includes(lower)) continue;
     if (typeof value === "string" && value) res.setHeader(key, value);
   }
   if (!res.hasHeader("content-type")) res.setHeader("content-type", fallbackContentType);

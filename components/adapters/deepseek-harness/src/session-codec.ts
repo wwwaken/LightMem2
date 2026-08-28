@@ -117,6 +117,7 @@ export function buildDshRawSemanticSnapshot(
   const messages: RawSemanticMessageRecord[] = [];
   const toolCalls: RawSemanticToolCallRecord[] = [];
   const toolResults: RawSemanticToolResultRecord[] = [];
+  const toolNameByCallId = new Map<string, string>();
 
   let currentTurn = 0;
   let lastTurnSeq = 0;
@@ -161,6 +162,7 @@ export function buildDshRawSemanticSnapshot(
           argumentsText: args,
           argumentsSummary: truncate(args),
         });
+        toolNameByCallId.set(event.data.callId, event.data.name);
         break;
       }
 
@@ -172,7 +174,7 @@ export function buildDshRawSemanticSnapshot(
         toolResults.push({
           anchor: anchor(sessionId, turn, "tool"),
           toolCallId: callId ?? "",
-          toolName: "",
+          toolName: callId ? (toolNameByCallId.get(callId) ?? "") : "",
           status: event.data.error ? "error" : "success",
           fullText,
           summary: truncate(fullText),

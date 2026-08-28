@@ -15,6 +15,7 @@
     "@lightrsi/artifact-store": "workspace:*",
     "@lightrsi/history": "workspace:*",
     "@lightrsi/host-adapter": "workspace:*",
-    "@lightrsi/kernel": "workspace:*"
+    "@lightrsi/kernel": "workspace:*",
+    "@lightrsi/runtime-core": "workspace:*"
   }
 }

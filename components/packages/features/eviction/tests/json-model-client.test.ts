@@ -112,6 +112,34 @@ test("does not hide network failures behind Chat Completions fallback", async ()
   }
 });
 
+test("does not retry auth, rate-limit, or server failures through Chat Completions", async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    for (const status of [401, 403, 429, 500, 503]) {
+      let calls = 0;
+      globalThis.fetch = async () => {
+        calls += 1;
+        return {
+          ok: false,
+          status,
+          async text() { return "provider-controlled-secret-body"; },
+        } as Response;
+      };
+      const client = createApiJsonModelClient({
+        baseUrl: "https://example.test/v1", apiKey: "secret", model: "model-a",
+      });
+      await assert.rejects(
+        client.request({ systemPrompt: "system", userPayload: "payload" }),
+        (error: unknown) => error instanceof Error
+          && error.message === `responses_api_failed:${status}`,
+      );
+      assert.equal(calls, 1);
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("aborts requests at the configured timeout", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (_input, init) => new Promise<Response>((_resolve, reject) => {

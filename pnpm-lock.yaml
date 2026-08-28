@@ -176,15 +176,15 @@ importers:
 
   components/packages/features/cleaner:
     dependencies:
-      '@lightrsi/eviction':
-        specifier: workspace:*
-        version: link:../eviction
       '@lightrsi/history':
         specifier: workspace:*
         version: link:../../foundation/history
       '@lightrsi/host-adapter':
         specifier: workspace:*
         version: link:../../foundation/host-adapter
+      '@lightrsi/runtime-core':
+        specifier: workspace:*
+        version: link:../../foundation/runtime-core
 
   components/packages/features/eviction:
     dependencies:
@@ -200,6 +200,9 @@ importers:
       '@lightrsi/kernel':
         specifier: workspace:*
         version: link:../../foundation/kernel
+      '@lightrsi/runtime-core':
+        specifier: workspace:*
+        version: link:../../foundation/runtime-core
 
   components/packages/features/memory: {}
 

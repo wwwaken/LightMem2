@@ -48,6 +48,12 @@ function shouldSkipForwardHeader(name: string): boolean {
   switch (name.toLowerCase()) {
     case "host":
     case "connection":
+    case "keep-alive":
+    case "proxy-authenticate":
+    case "proxy-authorization":
+    case "te":
+    case "trailer":
+    case "upgrade":
     case "content-length":
     case "content-encoding":
     case "transfer-encoding":
@@ -109,7 +115,10 @@ export function buildGatewayForwardHeaders(params: {
   }
 
   const authorization = resolveAuthorization(params.upstream, params.inboundAuthorization);
-  if (authorization && !headers.authorization) {
+  if (params.upstream.apiKey) {
+    headers.authorization = authorization!;
+    delete headers["x-api-key"];
+  } else if (authorization && !headers.authorization) {
     headers.authorization = authorization;
   }
   return headers;

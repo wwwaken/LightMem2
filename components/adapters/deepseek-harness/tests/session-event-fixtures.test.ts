@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
 
+import { buildDshRawSemanticSnapshot } from "../src/session-codec.js";
+
 type FixtureAction = "evict" | "keep";
 type TaskState = "completed" | "unresolved" | "current";
 type ToolPairStatus = "closed" | "orphan_result" | "duplicate_call";
@@ -515,6 +517,68 @@ function validateFixture(fixture: SessionEventFixture): void {
   validateReplacements(fixture, eventsBySeq);
 }
 
+function fixtureEventText(event: FixtureEvent): string {
+  const data = isObject(event.data) ? event.data : {};
+  const message = isObject(data.message) ? data.message : data;
+  const content = isObject(message) && Array.isArray(message.content) ? message.content : [];
+  return content.map((block) => {
+    if (!isObject(block)) return "";
+    if (typeof block.text === "string") return block.text;
+    if (Array.isArray(block.content)) {
+      return block.content
+        .filter(isObject)
+        .map((nested) => typeof nested.text === "string" ? nested.text : "")
+        .join(" ");
+    }
+    return "";
+  }).join(" ");
+}
+
+function validateFixtureAgainstCodec(fixture: SessionEventFixture): void {
+  const snapshot = buildDshRawSemanticSnapshot(
+    fixture.sessionId,
+    fixture.events as never,
+  );
+  const effective = new Set(fixture.effectiveEventSeqs);
+  const eventsBySeq = new Map(fixture.events.map((event) => [event.seq, event]));
+  const turns = turnByEventSeq(fixture);
+
+  for (const expected of fixture.expected.items) {
+    if (!effective.has(expected.sourceEventSeq)) continue;
+    const event = eventsBySeq.get(expected.sourceEventSeq);
+    assert.ok(event, `${fixture.id} ${expected.itemId} source event must exist`);
+    const turn = turns.get(expected.sourceEventSeq);
+    assert.ok(turn !== undefined, `${fixture.id} ${expected.itemId} source turn must exist`);
+    const marker = fixtureEventText(event);
+
+    if (expected.kind === "tool_call") {
+      const data = isObject(event.data) ? event.data : {};
+      const call = snapshot.toolCalls.find((candidate) =>
+        candidate.toolCallId === data.callId && candidate.anchor.turnSeq === turn,
+      );
+      assert.ok(call, `${fixture.id} ${expected.itemId} must be emitted by the codec`);
+      assert.equal(call.toolName, data.name);
+      continue;
+    }
+    if (expected.kind === "tool_result") {
+      const callId = resultCallId(event);
+      const result = snapshot.toolResults.find((candidate) =>
+        candidate.toolCallId === callId && candidate.anchor.turnSeq === turn,
+      );
+      assert.ok(result, `${fixture.id} ${expected.itemId} must be emitted by the codec`);
+      assert.match(result.fullText, new RegExp(marker.replace(/[.*+?^${}()|[\\]\\]/g, "\\$&")));
+      continue;
+    }
+    const role = expected.kind === "message" && isObject(event.data)
+      ? String(event.type === "assistant/message" ? "assistant" : event.data.role ?? "user")
+      : "user";
+    const message = snapshot.messages.find((candidate) =>
+      candidate.role === role && candidate.anchor.turnSeq === turn && candidate.text.includes(marker),
+    );
+    assert.ok(message, `${fixture.id} ${expected.itemId} must be emitted by the codec`);
+  }
+}
+
 describe("DSH native session event fixtures", () => {
   it("are sanitized and cover the complete G1 matrix", () => {
     const fixtures = readFixtures();
@@ -601,6 +665,10 @@ describe("DSH native session event fixtures", () => {
       ),
       "damaged persistence coverage is required",
     );
+  });
+
+  it("matches the real DSH codec output for every effective semantic item", () => {
+    for (const fixture of readFixtures()) validateFixtureAgainstCodec(fixture);
   });
 
   it("rejects a missing item classification", () => {

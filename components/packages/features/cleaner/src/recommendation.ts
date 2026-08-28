@@ -2,10 +2,10 @@ import { createHash } from "node:crypto";
 
 import {
   createApiJsonModelClient,
+  type JsonModelApiConfig,
   type JsonModelClient,
   type JsonModelUsage,
-  type TaskStateEstimatorApiConfig,
-} from "@lightrsi/eviction";
+} from "@lightrsi/runtime-core";
 import type {
   ContextCleanRecommendation,
   ContextCleanTaskBreakdown,
@@ -104,6 +104,10 @@ function sanitizeEvidence(value: ContextCleanTaskEvidence | undefined): ContextC
     supersededByTaskIds: sanitizeList(value?.supersededByTaskIds),
     futureReuseSignals: sanitizeList(value?.futureReuseSignals),
   };
+}
+
+function uniqueReasonCodes(values: readonly string[]): string[] {
+  return [...new Set(values)];
 }
 
 function taskDigest(task: ContextCleanTaskBreakdown): string {
@@ -248,7 +252,7 @@ export async function analyzeContextCleanRecommendations(params: {
     if (protectedByDeterministicPolicy(task)) {
       return { ...task, label: recommendation.label, description: recommendation.description,
         summary: recommendation.summary, recommendation: "protected" as const,
-        reasonCodes: [...recommendation.reasonCodes, "deterministic_protection"] };
+        reasonCodes: uniqueReasonCodes([...recommendation.reasonCodes, "deterministic_protection"]) };
     }
     return { ...task, label: recommendation.label, description: recommendation.description,
       summary: recommendation.summary, recommendation: recommendation.recommendation,
@@ -268,8 +272,8 @@ const RECOMMENDATION_SYSTEM_PROMPT = [
 ].join(" ");
 
 export function createApiContextCleanRecommendationProvider(
-  config: TaskStateEstimatorApiConfig,
-  createClient: (config: TaskStateEstimatorApiConfig) => JsonModelClient = createApiJsonModelClient,
+  config: JsonModelApiConfig,
+  createClient: (config: JsonModelApiConfig) => JsonModelClient = createApiJsonModelClient,
 ): ContextCleanRecommendationProvider {
   let client: JsonModelClient | undefined;
   return {

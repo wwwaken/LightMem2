@@ -45,6 +45,7 @@ describe("buildDshRawSemanticSnapshot", () => {
     assert.equal(snap.toolCalls[0].toolName, "fs_write");
     assert.equal(snap.toolResults.length, 1);
     assert.equal(snap.toolResults[0].toolCallId, "call_a");
+    assert.equal(snap.toolResults[0].toolName, "fs_write");
     assert.equal(snap.toolResults[0].status, "success");
     assert.equal(snap.toolResults[0].fullText, "written 42 bytes");
     assert.equal(snap.lastTurnSeq, 2);
