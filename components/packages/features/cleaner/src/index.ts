@@ -39,6 +39,7 @@ export type {
 } from "./token-accounting.js";
 export {
   createContextCleanerHostExecutionBridge,
+  deriveContextCleanStoredExecution,
   type CreateContextCleanerHostExecutionBridgeParams,
 } from "./host-execution-bridge.js";
 export * from "./recommendation.js";

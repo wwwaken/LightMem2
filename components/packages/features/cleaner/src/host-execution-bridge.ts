@@ -187,6 +187,29 @@ function buildMutationPlan(params: {
   };
 }
 
+/**
+ * Reconstructs the immutable mutation scope from the persisted plan. Hosts use
+ * this for recovery only; it never accepts item ids or digests from a caller.
+ */
+export function deriveContextCleanStoredExecution(params: {
+  record: ContextCleanPlanRecord;
+  selectedTaskIds: readonly string[];
+}): {
+  selectedTasks: ApprovedContextCleanTask[];
+  mutationPlan: ContextMutationPlan;
+} | undefined {
+  if (!uniqueNonBlankStrings([...params.selectedTaskIds])) return undefined;
+  const selectedTasks = selectedTasksFromPlan(
+    params.record,
+    params.selectedTaskIds,
+  );
+  if (!selectedTasks) return undefined;
+  return {
+    selectedTasks,
+    mutationPlan: buildMutationPlan({ record: params.record, selectedTasks }),
+  };
+}
+
 async function readStoredExecutionState(params: {
   stateDir: string;
   planId: string;
@@ -278,10 +301,14 @@ async function prepareScheduledClean(params: {
     return bypassed(["clean_execution_not_scheduled"], stored.receipt);
   }
 
-  const selectedTasks = selectedTasksFromPlan(stored.record, request.selectedTaskIds);
-  if (!selectedTasks) {
+  const storedExecution = deriveContextCleanStoredExecution({
+    record: stored.record,
+    selectedTaskIds: request.selectedTaskIds,
+  });
+  if (!storedExecution) {
     return bypassed(["clean_execution_plan_selection_invalid"], stored.receipt);
   }
+  const { selectedTasks, mutationPlan } = storedExecution;
 
   let current: ContextCleanExecutionSnapshot;
   try {
@@ -331,7 +358,6 @@ async function prepareScheduledClean(params: {
     }
   }
 
-  const mutationPlan = buildMutationPlan({ record: stored.record, selectedTasks });
   const revalidation = revalidateContextMutationPlan({
     snapshot: current.snapshot,
     plan: mutationPlan,

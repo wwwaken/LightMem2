@@ -10,7 +10,9 @@ import {
   contextCleanReceiptFilePath,
   contextCleanTransactionFilePath,
   createContextCleanerHostExecutionBridge,
+  deriveContextCleanStoredExecution,
   readContextCleanReceipt,
+  readContextCleanPlan,
   saveContextCleanPlan,
   transitionContextCleanState,
 } from "../src/index.js";
@@ -78,6 +80,31 @@ test("execution bridge expands only the frozen scheduled task scope", async () =
       second.execution.mutationPlan.planId,
     );
     assert.equal("adapterMetadata" in first.execution.mutationPlan, false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("stored execution derivation is deterministic and rejects duplicate task selections", async () => {
+  const root = await mkdtemp(join(tmpdir(), "lightrsi-clean-execution-derived-"));
+  try {
+    await saveScheduledPlan(root);
+    const stored = await readContextCleanPlan({ stateDir: root, planId: "clean-plan-1" });
+    assert.ok(stored.value);
+    const first = deriveContextCleanStoredExecution({
+      record: stored.value,
+      selectedTaskIds: ["task-a"],
+    });
+    const second = deriveContextCleanStoredExecution({
+      record: stored.value,
+      selectedTaskIds: ["task-a"],
+    });
+    assert.deepEqual(first, second);
+    assert.equal(first?.mutationPlan.sourceModuleId, "cleaner_manual");
+    assert.equal(deriveContextCleanStoredExecution({
+      record: stored.value,
+      selectedTaskIds: ["task-a", "task-a"],
+    }), undefined);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

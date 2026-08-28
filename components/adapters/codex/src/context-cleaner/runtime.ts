@@ -1,5 +1,9 @@
 import {
   createContextCleanerHostExecutionBridge,
+  deriveContextCleanStoredExecution,
+  readContextCleanPlan,
+  readContextCleanReceipt,
+  recoverContextCleanState,
   type ContextCleanPreparedExecution,
   type ContextCleanReceipt,
   type ContextCleanScheduledReceipt,
@@ -26,11 +30,19 @@ import {
   acquireCodexRebaseSessionLock,
   readCodexRebaseEpochJournal,
 } from "../context-rewrite/rebase-epoch.js";
-import type { CodexRebaseRequestResult } from "../context-rewrite/types.js";
+import type {
+  CodexRebaseEpoch,
+  CodexRebaseRequestResult,
+} from "../context-rewrite/types.js";
+import {
+  buildCodexCleanerAppliedReceipt,
+  buildCodexCleanerAppliedReceiptFromRewrite,
+} from "./applied-receipt.js";
 import {
   appendCodexCleanerCommitted,
   appendCodexCleanerTerminal,
   readCodexCleanerSchedule,
+  type CodexCleanerCommittedRecord,
   type CodexCleanerScheduledRecord,
 } from "./scheduler.js";
 
@@ -68,6 +80,10 @@ export type CodexCleanerHandoffValidation = {
   reasonCodes: string[];
 };
 
+export type CodexCleanerAppliedReceiptFinalization =
+  | { outcome: "applied"; reasonCodes: [] }
+  | { outcome: "reserved"; reasonCodes: string[] };
+
 function uniqueStrings(values: Iterable<string>): string[] {
   const result: string[] = [];
   const seen = new Set<string>();
@@ -82,6 +98,10 @@ function uniqueStrings(values: Iterable<string>): string[] {
 
 function sameCanonicalValue(left: unknown, right: unknown): boolean {
   return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function sameStringSet(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((value) => right.includes(value));
 }
 
 function fullyApplied(
@@ -146,6 +166,16 @@ function executionBridge(params: {
   });
 }
 
+function receiptBridge(stateDir: string) {
+  return createContextCleanerHostExecutionBridge({
+    stateDir,
+    hostId: "codex",
+    async readExecutionSnapshot() {
+      throw new Error("cleaner_runtime_receipt_write_does_not_read_host_state");
+    },
+  });
+}
+
 function staleReasonCodes(reasonCodes: readonly string[]): string[] | undefined {
   const stale = uniqueStrings(reasonCodes.filter((reason) => STALE_REASONS.has(reason)));
   return stale.length > 0 ? stale : undefined;
@@ -190,14 +220,7 @@ async function persistStale(params: {
     reasons: [...params.reasonCodes],
     updatedAt: params.updatedAt,
   };
-  const bridge = createContextCleanerHostExecutionBridge({
-    stateDir: params.stateDir,
-    hostId: "codex",
-    async readExecutionSnapshot() {
-      throw new Error("cleaner_runtime_stale_does_not_read_host_state");
-    },
-  });
-  const stored = await bridge.recordCleanReceipt(receipt);
+  const stored = await receiptBridge(params.stateDir).recordCleanReceipt(receipt);
   if (stored.bypassed) {
     return {
       outcome: "reserved",
@@ -248,6 +271,197 @@ export async function finalizeCodexCleanerHandoffFailure(params: {
   });
 }
 
+export async function finalizeCodexCleanerAppliedReceipt(params: {
+  stateDir: string;
+  sessionId: string;
+  prepared: CodexCleanerPreparedRebase;
+  epoch: CodexRebaseEpoch;
+}): Promise<CodexCleanerAppliedReceiptFinalization> {
+  const built = buildCodexCleanerAppliedReceiptFromRewrite({
+    execution: params.prepared.execution,
+    rewriteResult: params.prepared.rewriteResult,
+    rebaseRequest: params.prepared.rebaseRequest,
+    epoch: params.epoch,
+  });
+  if (!built.receipt) {
+    return { outcome: "reserved", reasonCodes: built.reasons };
+  }
+  const stored = await receiptBridge(params.stateDir).recordCleanReceipt(built.receipt);
+  if (stored.bypassed || stored.value?.status !== "applied") {
+    return {
+      outcome: "reserved",
+      reasonCodes: uniqueStrings([
+        "cleaner_runtime_applied_receipt_write_failed",
+        ...stored.reasons,
+      ]),
+    };
+  }
+  const local = await appendCodexCleanerCommitted({
+    stateDir: params.stateDir,
+    sessionId: params.sessionId,
+    cleanPlanId: params.prepared.execution.cleanPlanId,
+    mutationPlanId: params.prepared.execution.mutationPlan.planId,
+    epochId: params.epoch.epochId,
+    updatedAt: params.epoch.updatedAt,
+  });
+  if (local.outcome !== "transitioned" && local.outcome !== "unchanged") {
+    return {
+      outcome: "reserved",
+      reasonCodes: uniqueStrings([
+        "cleaner_runtime_applied_schedule_write_failed",
+        ...local.reasons,
+      ]),
+    };
+  }
+  return { outcome: "applied", reasonCodes: [] };
+}
+
+type CodexCleanerCommitRecovery =
+  | { outcome: "none"; reasonCodes: [] }
+  | {
+      outcome: "recovered";
+      commit: {
+        cleanPlanId: string;
+        mutationPlanId: string;
+        epochId: string;
+        updatedAt: string;
+      };
+      reasonCodes: [];
+    }
+  | { outcome: "terminal"; receipt: ContextCleanReceipt; reasonCodes: string[] }
+  | { outcome: "reserved"; reasonCodes: string[] };
+
+function asScheduledReceiptForRecovery(
+  receipt: ContextCleanReceipt,
+): ContextCleanScheduledReceipt | undefined {
+  if (receipt.status === "scheduled") return { ...receipt, status: "scheduled" };
+  if (receipt.status !== "applied") return undefined;
+  const {
+    appliedSavedTokens: _appliedSavedTokens,
+    appliedSavedChars: _appliedSavedChars,
+    evidence: _evidence,
+    ...scheduled
+  } = receipt;
+  return { ...scheduled, status: "scheduled", fallbackUsed: false };
+}
+
+async function recoverCodexCleanerCommittedEpoch(params: {
+  stateDir: string;
+  sessionId: string;
+  schedule: CodexCleanerScheduledRecord | CodexCleanerCommittedRecord;
+}): Promise<CodexCleanerCommitRecovery> {
+  const recovered = await recoverContextCleanState({
+    stateDir: params.stateDir,
+    planId: params.schedule.cleanPlanId,
+  });
+  if (recovered.bypassed) {
+    return {
+      outcome: "reserved",
+      reasonCodes: uniqueStrings([
+        "cleaner_runtime_receipt_recovery_failed",
+        ...recovered.reasons,
+      ]),
+    };
+  }
+  const [storedPlan, storedReceipt, epochs] = await Promise.all([
+    readContextCleanPlan({ stateDir: params.stateDir, planId: params.schedule.cleanPlanId }),
+    readContextCleanReceipt({ stateDir: params.stateDir, planId: params.schedule.cleanPlanId }),
+    readCodexRebaseEpochJournal(params.stateDir, params.sessionId),
+  ]);
+  if (storedPlan.bypassed || storedReceipt.bypassed) {
+    return {
+      outcome: "reserved",
+      reasonCodes: uniqueStrings([
+        "cleaner_runtime_receipt_recovery_unavailable",
+        ...storedPlan.reasons,
+        ...storedReceipt.reasons,
+      ]),
+    };
+  }
+  if (epochs.readError || epochs.malformedLineCount > 0) {
+    return {
+      outcome: "reserved",
+      reasonCodes: ["cleaner_runtime_epoch_journal_unavailable"],
+    };
+  }
+  if (!storedPlan.value || !storedReceipt.value) {
+    return params.schedule.status === "committed"
+      ? { outcome: "reserved", reasonCodes: ["cleaner_runtime_committed_receipt_missing"] }
+      : { outcome: "none", reasonCodes: [] };
+  }
+  const record = storedPlan.value.plan;
+  const receipt = storedReceipt.value;
+  if (record.hostId !== "codex"
+    || record.sessionId !== params.sessionId
+    || record.baseRevision !== params.schedule.baseRevision
+    || record.planId !== params.schedule.cleanPlanId
+    || storedPlan.value.status !== receipt.status
+    || receipt.hostId !== "codex"
+    || receipt.sessionId !== params.sessionId
+    || receipt.planId !== params.schedule.cleanPlanId
+    || !sameStringSet(receipt.selectedTaskIds, params.schedule.selectedTaskIds)) {
+    return { outcome: "reserved", reasonCodes: ["cleaner_runtime_receipt_identity_invalid"] };
+  }
+  if (receipt.status === "stale" || receipt.status === "cancelled" || receipt.status === "failed") {
+    return { outcome: "terminal", receipt, reasonCodes: receipt.reasons };
+  }
+  const scheduledReceipt = asScheduledReceiptForRecovery(receipt);
+  const storedExecution = scheduledReceipt && deriveContextCleanStoredExecution({
+    record: storedPlan.value,
+    selectedTaskIds: params.schedule.selectedTaskIds,
+  });
+  if (!scheduledReceipt || !storedExecution) {
+    return { outcome: "reserved", reasonCodes: ["cleaner_runtime_receipt_scope_invalid"] };
+  }
+  const execution: ContextCleanPreparedExecution = {
+    cleanPlanId: storedPlan.value.plan.planId,
+    hostId: storedPlan.value.plan.hostId,
+    sessionId: storedPlan.value.plan.sessionId,
+    baseRevision: storedPlan.value.plan.baseRevision,
+    selectedTasks: storedExecution.selectedTasks,
+    mutationPlan: storedExecution.mutationPlan,
+    scheduledReceipt,
+  };
+  const matchingEpoch = epochs.epochs.find((epoch) => (
+    epoch.status === "committed"
+    && epoch.planId === execution.mutationPlan.planId
+    && (params.schedule.status !== "committed" || epoch.epochId === params.schedule.epochId)
+  ));
+  if (!matchingEpoch) {
+    return params.schedule.status === "committed"
+      ? { outcome: "reserved", reasonCodes: ["cleaner_runtime_committed_epoch_missing"] }
+      : { outcome: "none", reasonCodes: [] };
+  }
+  const built = buildCodexCleanerAppliedReceipt({ execution, epoch: matchingEpoch });
+  if (!built.receipt) return { outcome: "reserved", reasonCodes: built.reasons };
+  if (receipt.status === "applied") {
+    if (!sameCanonicalValue(receipt, built.receipt)) {
+      return { outcome: "reserved", reasonCodes: ["cleaner_runtime_applied_receipt_evidence_invalid"] };
+    }
+  } else {
+    const stored = await receiptBridge(params.stateDir).recordCleanReceipt(built.receipt);
+    if (stored.bypassed || stored.value?.status !== "applied") {
+      return {
+        outcome: "reserved",
+        reasonCodes: uniqueStrings([
+          "cleaner_runtime_applied_receipt_write_failed",
+          ...stored.reasons,
+        ]),
+      };
+    }
+  }
+  return {
+    outcome: "recovered",
+    commit: {
+      cleanPlanId: execution.cleanPlanId,
+      mutationPlanId: execution.mutationPlan.planId,
+      epochId: matchingEpoch.epochId,
+      updatedAt: matchingEpoch.updatedAt,
+    },
+    reasonCodes: [],
+  };
+}
+
 async function persistExistingTerminal(params: {
   stateDir: string;
   sessionId: string;
@@ -294,9 +508,6 @@ export async function prepareCodexCleanerRebase(params: {
   if (initial.outcome === "bypassed") {
     return { outcome: "reserved", reasonCodes: initial.reasons };
   }
-  if (initial.outcome === "committed") {
-    return { outcome: "committed", reasonCodes: ["cleaner_runtime_already_committed"] };
-  }
   if (initial.outcome === "terminal") {
     return { outcome: "terminal", reasonCodes: initial.record.reasons };
   }
@@ -317,81 +528,86 @@ export async function prepareCodexCleanerRebase(params: {
   } | undefined;
   try {
     const currentSchedule = await readCodexCleanerSchedule(params);
-    if (currentSchedule.outcome !== "ready") {
-      decision = currentSchedule.outcome === "missing"
-        ? { outcome: "reserved", reasonCodes: ["cleaner_runtime_schedule_changed"] }
-        : currentSchedule.outcome === "bypassed"
-          ? { outcome: "reserved", reasonCodes: currentSchedule.reasons }
-          : currentSchedule.outcome === "committed"
-            ? { outcome: "committed", reasonCodes: ["cleaner_runtime_already_committed"] }
-            : { outcome: "terminal", reasonCodes: currentSchedule.record.reasons };
-    } else if (!sameCanonicalValue(initial.record, currentSchedule.record)) {
+    if (currentSchedule.outcome === "missing") {
+      decision = { outcome: "reserved", reasonCodes: ["cleaner_runtime_schedule_changed"] };
+    } else if (currentSchedule.outcome === "bypassed") {
+      decision = { outcome: "reserved", reasonCodes: currentSchedule.reasons };
+    } else if (currentSchedule.outcome === "terminal") {
+      decision = { outcome: "terminal", reasonCodes: currentSchedule.record.reasons };
+    } else if (currentSchedule.outcome === "ready"
+      && initial.outcome === "ready"
+      && !sameCanonicalValue(initial.record, currentSchedule.record)) {
       decision = { outcome: "reserved", reasonCodes: ["cleaner_runtime_schedule_changed"] };
     } else {
-      let context;
-      try {
-        context = await executionContext(params);
-      } catch {
+      const recovery = await recoverCodexCleanerCommittedEpoch({
+        stateDir: params.stateDir,
+        sessionId: params.sessionId,
+        schedule: currentSchedule.record,
+      });
+      if (recovery.outcome === "recovered") {
+        recoveredCommit = recovery.commit;
         decision = {
-          outcome: "reserved",
-          reasonCodes: ["cleaner_runtime_execution_context_unavailable"],
+          outcome: "committed",
+          reasonCodes: ["cleaner_runtime_already_committed"],
         };
-        return decision;
-      }
-      const bridge = executionBridge({
-        ...params,
-        backendRequest: context.backendRequest,
-        snapshot: context.snapshot,
-      });
-      const prepared = await bridge.prepareScheduledClean({
-        cleanPlanId: currentSchedule.record.cleanPlanId,
-        sessionId: currentSchedule.record.sessionId,
-        baseRevision: currentSchedule.record.baseRevision,
-        selectedTaskIds: currentSchedule.record.selectedTaskIds,
-      });
-      if (prepared.outcome === "terminal") {
+      } else if (recovery.outcome === "terminal") {
         decision = {
           outcome: "terminal",
-          receipt: prepared.receipt,
-          reasonCodes: prepared.receipt.reasons.length > 0
-            ? prepared.receipt.reasons
+          receipt: recovery.receipt,
+          reasonCodes: recovery.reasonCodes.length > 0
+            ? recovery.reasonCodes
             : ["cleaner_runtime_terminal_receipt"],
         };
-      } else if (prepared.outcome !== "ready") {
-        const stale = prepared.outcome === "bypassed"
-          ? staleReasonCodes(prepared.reasons)
-          : undefined;
-        if (stale && prepared.outcome === "bypassed"
-          && isScheduledReceipt(prepared.receipt)) {
-          scheduledReceipt = prepared.receipt;
-          decision = { outcome: "reserved", reasonCodes: stale };
-        } else {
-          decision = { outcome: "reserved", reasonCodes: prepared.reasons };
-        }
+      } else if (recovery.outcome === "reserved") {
+        decision = { outcome: "reserved", reasonCodes: recovery.reasonCodes };
+      } else if (currentSchedule.outcome === "committed") {
+        decision = {
+          outcome: "reserved",
+          reasonCodes: ["cleaner_runtime_committed_receipt_missing"],
+        };
       } else {
-        scheduledReceipt = prepared.execution.scheduledReceipt;
-        const epochs = await readCodexRebaseEpochJournal(params.stateDir, params.sessionId);
-        const committedEpoch = epochs.epochs.find((epoch) => (
-          epoch.status === "committed"
-          && epoch.planId === prepared.execution.mutationPlan.planId
-        ));
-        if (epochs.readError || epochs.malformedLineCount > 0) {
+        let context;
+        try {
+          context = await executionContext(params);
+        } catch {
           decision = {
             outcome: "reserved",
-            reasonCodes: ["cleaner_runtime_epoch_journal_unavailable"],
+            reasonCodes: ["cleaner_runtime_execution_context_unavailable"],
           };
-        } else if (committedEpoch) {
-          recoveredCommit = {
-            cleanPlanId: prepared.execution.cleanPlanId,
-            mutationPlanId: prepared.execution.mutationPlan.planId,
-            epochId: committedEpoch.epochId,
-            updatedAt: committedEpoch.updatedAt,
-          };
+          return decision;
+        }
+        const bridge = executionBridge({
+          ...params,
+          backendRequest: context.backendRequest,
+          snapshot: context.snapshot,
+        });
+        const prepared = await bridge.prepareScheduledClean({
+          cleanPlanId: currentSchedule.record.cleanPlanId,
+          sessionId: currentSchedule.record.sessionId,
+          baseRevision: currentSchedule.record.baseRevision,
+          selectedTaskIds: currentSchedule.record.selectedTaskIds,
+        });
+        if (prepared.outcome === "terminal") {
           decision = {
-            outcome: "committed",
-            reasonCodes: ["cleaner_runtime_already_committed"],
+            outcome: "terminal",
+            receipt: prepared.receipt,
+            reasonCodes: prepared.receipt.reasons.length > 0
+              ? prepared.receipt.reasons
+              : ["cleaner_runtime_terminal_receipt"],
           };
+        } else if (prepared.outcome !== "ready") {
+          const stale = prepared.outcome === "bypassed"
+            ? staleReasonCodes(prepared.reasons)
+            : undefined;
+          if (stale && prepared.outcome === "bypassed"
+            && isScheduledReceipt(prepared.receipt)) {
+            scheduledReceipt = prepared.receipt;
+            decision = { outcome: "reserved", reasonCodes: stale };
+          } else {
+            decision = { outcome: "reserved", reasonCodes: prepared.reasons };
+          }
         } else {
+          scheduledReceipt = prepared.execution.scheduledReceipt;
           const applied = await codexSharedContextRewriteBackend.apply({
             snapshot: context.snapshot,
             plan: prepared.execution.mutationPlan,
