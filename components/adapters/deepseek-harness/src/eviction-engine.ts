@@ -81,6 +81,10 @@ export function registerEvictionPreStep(
 ): void {
   const estimator = createDshTaskStateEstimator(config.taskStateEstimator);
 
+  // §1.3: eviction must run BEFORE DSH compaction in the pre-step waterfall, so
+  // compaction sees the already-shrunk surface. `prepend` puts this handler ahead
+  // of compaction-basic's (which registers normally), mirroring how DSH's own
+  // invariant handler prepends to run first.
   ctx.on("agent/pre-step", async (payload: DshPreStepPayload, next: DshPreStepNext): Promise<DshPreStepDecision> => {
     if (!config.enabled || !config.eviction.enabled) { log(config, "disabled"); return next(); }
 
@@ -118,5 +122,5 @@ export function registerEvictionPreStep(
       log(config, "error", error);
       return next();
     }
-  });
+  }, { prepend: true });
 }
