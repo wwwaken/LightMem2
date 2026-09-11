@@ -57,5 +57,9 @@
     "tokenpilot",
     "context-management",
     "canonical-surface"
-  ]
+  ],
+  "dependencies": {
+    "@lightrsi/cleaner": "workspace:*",
+    "@lightrsi/host-adapter": "workspace:*"
+  }
 }
