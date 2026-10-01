@@ -14,19 +14,23 @@ import {
   type ContextCleanPlan,
 } from "@lightrsi/cleaner";
 import type { HostGatewayForwarder } from "@lightrsi/host-adapter";
-import type { SessionTaskRegistry } from "@lightrsi/history";
+import {
+  persistRawSemanticTurnRecord,
+  persistSessionTaskRegistry,
+  type SessionTaskRegistry,
+} from "@lightrsi/history";
 
 import { attributeClaudeSnapshotTasks } from "../src/context-cleaner/snapshot.js";
 import { scheduleClaudeCleanerPlan } from "../src/context-cleaner/scheduler.js";
 import { normalizeTokenPilotClaudeCodeConfig } from "../src/config.js";
 import { startClaudeCodeGatewayRuntime } from "../src/gateway-runtime.js";
 import { createConsoleLogger } from "../src/logger.js";
+import { buildRawSemanticTurnRecord } from "../src/context-rewrite/semantic-mapping.js";
 import { buildClaudeContextSnapshot } from "../src/context-rewrite/snapshot.js";
 import {
   readLatestClaudeSnapshotRecord,
   saveLatestClaudeSnapshot,
 } from "../src/context-rewrite/snapshot-store.js";
-import { persistSessionTaskRegistry } from "@lightrsi/history";
 
 const SESSION = "claude-cleaner-gateway-session";
 const PLAN = "claude-cleaner-gateway-plan";
@@ -287,7 +291,17 @@ test("scheduled Claude clean retries after upstream rejection and commits only a
   });
 
   try {
-    await persistSessionTaskRegistry(stateDir, registry(), { expectedVersion: 0 });
+    const runtimeRegistry = registry();
+    runtimeRegistry.blockToTaskIds = {};
+    runtimeRegistry.turnToTaskIds = {
+      [`${SESSION}:t1`]: ["task-completed"],
+    };
+    await persistSessionTaskRegistry(stateDir, runtimeRegistry, { expectedVersion: 0 });
+    await persistRawSemanticTurnRecord(stateDir, buildRawSemanticTurnRecord({
+      sessionId: SESSION,
+      turnSeq: 1,
+      messages: historicalMessages.slice(0, 2),
+    }));
     assert.deepEqual(await saveLatestClaudeSnapshot(stateDir, SESSION, baseSnapshot), { saved: true });
     assert.equal((await saveContextCleanPlan({ stateDir, plan })).outcome, "stored");
     const pending: Omit<ContextCleanPendingReceipt, "status"> = {

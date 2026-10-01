@@ -44,7 +44,10 @@ import {
 } from "./context-rewrite/snapshot-store.js";
 import { appendOverlayHistory } from "./context-rewrite/overlay-history.js";
 import { resolveClaudeTaskStateEstimator } from "./context-rewrite/estimator-config.js";
-import { prepareSemanticDelta } from "./context-rewrite/semantic-pipeline.js";
+import {
+  loadPersistedToolCallTurnMap,
+  prepareSemanticDelta,
+} from "./context-rewrite/semantic-pipeline.js";
 import { buildSegmentToStableIdMap } from "./context-rewrite/segment-stable-id-map.js";
 import {
   buildContextMutationPlan,
@@ -539,6 +542,21 @@ export async function startClaudeCodeGatewayRuntime(params: {
           lifecyclePlannerStatus = "bypassed";
           lifecyclePlannerReasonCodes = ["planner_runtime_error"];
           logger.warn(`lifecycle planner failed (ignored): ${String(error)}`);
+        }
+      }
+
+      // A pending manual schedule skips the lifecycle planner so task state
+      // cannot advance before the approved rewrite. Restore the already-
+      // persisted tool-call map separately so current-scope validation can
+      // still prove that the relocated items belong to the selected task.
+      if (manualCleanerSuppressesAutomaticEviction && !semanticTurnByToolCallId) {
+        try {
+          semanticTurnByToolCallId = await loadPersistedToolCallTurnMap({
+            stateDir: config.stateDir,
+            sessionId,
+          });
+        } catch (error) {
+          logger.warn(`context cleaner historical task attribution failed (ignored): ${String(error)}`);
         }
       }
 
